@@ -6,11 +6,28 @@ const tabs = ['Economizados', 'Reservas', 'Comida salva']
 const activeTab = ref('Economizados')
 
 const menuItems = [
-  { label: 'Histórico de pedidos', icon: '📦' },
-  { label: 'Editar dados', icon: '✏️' },
-  { label: 'Central de ajuda', icon: '❓' },
-  { label: 'Termos e privacidade', icon: '📄' },
+  {
+    label: 'Histórico de pedidos',
+    icon: '📦',
+    to: '/historico'
+  },
+  {
+    label: 'Editar dados',
+    icon: '✏️',
+    to: '/perfil/editar'
+  },
+  {
+    label: 'Central de ajuda',
+    icon: '❓',
+    to: '/perfil/ajuda'
+  },
+  {
+    label: 'Termos e privacidade',
+    icon: '📄',
+    to: '/perfil/termos'
+  },
 ]
+  
 
 const user = {
   name: 'João Silva',
@@ -44,10 +61,15 @@ const user = {
 
     <main class="content">
       <div class="menu-card">
-        <button v-for="item in menuItems" :key="item.label" class="menu-row">
+        <RouterLink
+          v-for="item in menuItems"
+          :key="item.label"
+          :to="item.to"
+          class="menu-row"
+        >
           <span>{{ item.icon }} {{ item.label }}</span>
           <span class="chevron">›</span>
-        </button>
+        </RouterLink>
       </div>
 
       <div class="menu-card">
@@ -157,14 +179,22 @@ const user = {
   display: flex;
   justify-content: space-between;
   align-items: center;
+
   background: transparent;
   border: none;
+
   color: var(--cf-text);
+
   font-size: 13px;
   font-weight: 500;
+
   padding: 15px 16px;
+
   border-bottom: 1px solid var(--cf-border);
+
   text-align: left;
+
+  text-decoration: none;
 }
 
 .menu-row:last-child {

@@ -31,6 +31,11 @@ const router = createRouter({
       component: () => import('@/views/ProfileView.vue'),
     },
     {
+      path: '/perfil/editar',
+      name: 'perfil-editar',
+      component: () => import('@/views/EditProfileView.vue'),
+    },
+    {
       path: '/buscar',
       name: 'buscar',
       component: () => import('@/views/SearchView.vue'),
