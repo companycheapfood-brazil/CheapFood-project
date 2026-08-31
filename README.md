@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # cheapFood
 
 This template should help get you started developing with Vue 3 in Vite.
@@ -40,3 +41,6 @@ npm run dev
 ```sh
 npm run build
 ```
+=======
+# CheapFood-project
+>>>>>>> 901a8d8a1d0d12fe67b7d24479f5166f2da2a3d8
