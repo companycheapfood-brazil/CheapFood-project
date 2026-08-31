@@ -1,0 +1,84 @@
+/* Paleta CheapFood - tema claro */
+:root {
+  --cf-bg: #ffffff;
+  --cf-bg-elevated: #f7f7f9;
+  --cf-card: #f2f2f5;
+  --cf-card-soft: #e9e9ee;
+
+  --cf-orange: #f5a623;
+  --cf-orange-soft: #d9891a;
+  --cf-orange-dark: #c9791a;
+  --cf-pink: #ff3b69;
+  --cf-pink-soft: #e0335c;
+  --cf-green: #2ecc71;
+
+  --cf-text: #1a1a1a;
+  --cf-text-muted: #6b6c75;
+  --cf-text-faint: #9a9aa5;
+  --cf-border: #e2e2e8;
+
+  --cf-radius-sm: 10px;
+  --cf-radius-md: 16px;
+  --cf-radius-lg: 22px;
+  --cf-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+
+  /* Painel do lojista */
+  --mc-bg: #ffffff;
+  --mc-surface: #ffffff;
+  --mc-cream: #fdf6e9;
+  --mc-cream-border: #f0dfb8;
+  --mc-purple: #8b85f0;
+  --mc-purple-soft: #ede9fe;
+  --mc-navy: #1e1b6e;
+  --mc-navy-dark: #14124d;
+  --mc-border: #eceaf4;
+  --mc-text: #1a1a2e;
+  --mc-text-muted: #7a7a8c;
+  --mc-warning-bg: #fff4e0;
+  --mc-warning-text: #a6690a;
+  --mc-success: #1f8a4c;
+  --mc-danger: #d92d3f;
+  --mc-danger-soft: #fdeceb;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--cf-bg);
+  color: var(--cf-text);
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+}
