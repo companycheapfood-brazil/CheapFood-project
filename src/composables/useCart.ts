@@ -1,72 +1,94 @@
-import { computed, reactive } from 'vue'
+import { computed, reactive, readonly } from 'vue'
 import type { CartItem, Product } from '@/types'
+import { generateId } from '@/utils/helpers'
 
-// Estado reativo único, compartilhado por todos os componentes que
-// importarem este composable (padrão "store" simples sem Pinia).
-const items = reactive<CartItem[]>([])
-const lastReservationCode = reactive({ value: '' })
+// Estado interno reativo
+const state = reactive({
+  items: [] as CartItem[],
+  lastReservationCode: '',
+})
 
+/**
+ * Adiciona um produto ao carrinho.
+ */
 function addToCart(product: Product, quantity = 1) {
-  const existing = items.find((i) => i.product.id === product.id)
+  const existing = state.items.find((i) => i.product.id === product.id)
   if (existing) {
     existing.quantity += quantity
   } else {
-    items.push({ product, quantity })
+    state.items.push({ product, quantity })
   }
 }
 
+/**
+ * Atualiza a quantidade de um item.
+ */
 function updateQuantity(productId: string, delta: number) {
-  const item = items.find((i) => i.product.id === productId)
+  const item = state.items.find((i) => i.product.id === productId)
   if (!item) return
+
   item.quantity += delta
+
   if (item.quantity <= 0) {
     removeFromCart(productId)
   }
 }
 
+/**
+ * Remove um item do carrinho.
+ */
 function removeFromCart(productId: string) {
-  const index = items.findIndex((i) => i.product.id === productId)
-  if (index !== -1) items.splice(index, 1)
-}
-
-function clearCart() {
-  items.splice(0, items.length)
-}
-
-function generateReservationCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let code = ''
-  for (let i = 0; i < 4; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)]
+  const index = state.items.findIndex((i) => i.product.id === productId)
+  if (index !== -1) {
+    state.items.splice(index, 1)
   }
-  lastReservationCode.value = code
+}
+
+/**
+ * Limpa o carrinho.
+ */
+function clearCart() {
+  state.items = []
+}
+
+/**
+ * Gera um código de reserva e limpa o carrinho.
+ */
+function checkout() {
+  const code = generateId(4)
+  state.lastReservationCode = code
+  // clearCart() // Opcional: dependendo se quer limpar logo após gerar ou depois
   return code
 }
 
-const totalItems = computed(() => items.reduce((sum, i) => sum + i.quantity, 0))
+// Getters calculados
+const totalItems = computed(() => state.items.reduce((sum, i) => sum + i.quantity, 0))
 
-const subtotal = computed(() =>
-  items.reduce((sum, i) => sum + i.product.price * i.quantity, 0),
-)
+const subtotal = computed(() => state.items.reduce((sum, i) => sum + i.product.price * i.quantity, 0))
 
 const totalSavings = computed(() =>
-  items.reduce((sum, i) => {
-    const original = i.product.originalPrice ?? i.product.price
+  state.items.reduce((sum, i) => {
+    const original = (i.product as any).old_price ?? i.product.price
     return sum + (original - i.product.price) * i.quantity
   }, 0),
 )
 
 export function useCart() {
   return {
-    items,
+    // Estado (somente leitura para o exterior)
+    items: readonly(state.items),
+    lastReservationCode: computed(() => state.lastReservationCode),
+
+    // Getters
     totalItems,
     subtotal,
     totalSavings,
-    lastReservationCode,
+
+    // Ações
     addToCart,
     updateQuantity,
     removeFromCart,
     clearCart,
-    generateReservationCode,
+    checkout,
   }
 }

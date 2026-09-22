@@ -20,7 +20,7 @@ const tabs = [
       :key="tab.name"
       :to="tab.to"
       class="nav-item"
-      :class="{ active: route.name === tab.name }"
+      :class="{ active: route.name === tab.name || (tab.name === 'home' && route.name === 'produto') || (tab.name === 'carrinho' && route.name === 'comprovante') }"
     >
       <span class="nav-icon-wrap">
         <span class="nav-icon">{{ tab.icon }}</span>

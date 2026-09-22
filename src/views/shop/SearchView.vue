@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { products } from '@/data/products'
+import { ref, computed, onMounted } from 'vue'
+import ShopService from '@/services/shop.service'
 import ProductCard from '@/components/ProductCard.vue'
 import BottomNav from '@/components/BottomNav.vue'
 
 const search = ref('')
+const allProducts = ref<any[]>([])
 
-const results = computed(() =>
-  products.filter((p) => p.name.toLowerCase().includes(search.value.toLowerCase())),
-)
+onMounted(async () => {
+  allProducts.value = await ShopService.getProducts()
+})
+
+const results = computed(() => {
+  if (!search.value) return allProducts.value
+  return allProducts.value.filter((p) => p.name.toLowerCase().includes(search.value.toLowerCase()))
+})
 </script>
 
 <template>

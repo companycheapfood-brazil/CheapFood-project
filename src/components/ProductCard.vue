@@ -19,21 +19,26 @@ function quickAdd(event: MouseEvent) {
 
 <template>
   <div class="product-card" @click="openProduct">
-    <div class="thumb">{{ product.icon }}</div>
+    <div class="thumb">{{ product.image }}</div>
 
     <div class="info">
       <p class="name">{{ product.name }}</p>
       <p class="store">{{ product.store }}</p>
       <div class="price-row">
         <span class="price">R$ {{ product.price.toFixed(2).replace('.', ',') }}</span>
-        <span v-if="product.originalPrice" class="original-price">
-          R$ {{ product.originalPrice.toFixed(2).replace('.', ',') }}
+        <span v-if="product.old_price" class="original-price">
+          R$ {{ product.old_price.toFixed(2).replace('.', ',') }}
         </span>
       </div>
-      <span v-if="product.expiresLabel" class="expires-badge">{{ product.expiresLabel }}</span>
+      <span v-if="product.expires_in" class="expires-badge">{{ product.expires_in }}</span>
     </div>
 
-    <button class="add-btn" @click="quickAdd">+</button>
+    <button class="add-btn" @click="quickAdd">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    </button>
   </div>
 </template>
 
@@ -111,17 +116,30 @@ function quickAdd(event: MouseEvent) {
 }
 
 .add-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
   border: none;
-  background: var(--cf-orange);
-  color: #1a1a1a;
-  font-size: 18px;
-  font-weight: 700;
+  background-color: #ff3b69;
+  color: white;
+  font-size: 1.2rem;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  box-shadow: 0 4px 10px rgba(255, 59, 105, 0.3);
+}
+
+.add-btn:hover {
+  background-color: #e0335c;
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 6px 15px rgba(255, 59, 105, 0.45);
+}
+
+.add-btn:active {
+  transform: translateY(0) scale(0.95);
+  box-shadow: 0 2px 5px rgba(255, 59, 105, 0.3);
 }
 </style>

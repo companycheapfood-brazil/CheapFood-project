@@ -1,9 +1,34 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '@/views/HomeView.vue'
+import HomeView from '@/views/shop/HomeView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    {
+      path: '/start',
+      name: 'start',
+      component: () => import('@/views/auth/StartView.vue'),
+    },
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/auth/LoginView.vue'),
+    },
+    {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/views/auth/RegisterView.vue'),
+    },
+    {
+      path: '/forgot-password',
+      name: 'forgot-password',
+      component: () => import('@/views/auth/ForgotPasswordView.vue'),
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: () => import('@/views/auth/ResetPasswordView.vue'),
+    },
     {
       path: '/',
       name: 'home',
@@ -12,33 +37,53 @@ const router = createRouter({
     {
       path: '/produto/:id',
       name: 'produto',
-      component: () => import('@/views/ProductView.vue'),
+      component: () => import('@/views/shop/ProductView.vue'),
       props: true,
     },
     {
       path: '/carrinho',
       name: 'carrinho',
-      component: () => import('@/views/CartView.vue'),
+      component: () => import('@/views/shop/CartView.vue'),
     },
     {
       path: '/comprovante',
       name: 'comprovante',
-      component: () => import('@/views/ReceiptView.vue'),
+      component: () => import('@/views/shop/ReceiptView.vue'),
     },
     {
       path: '/perfil',
       name: 'perfil',
-      component: () => import('@/views/ProfileView.vue'),
+      component: () => import('@/views/profile/ProfileView.vue'),
     },
     {
       path: '/perfil/editar',
       name: 'perfil-editar',
-      component: () => import('@/views/EditProfileView.vue'),
+      component: () => import('@/views/profile/EditProfileView.vue'),
+    },
+    {
+      path: '/perfil/historico',
+      name: 'perfil-historico',
+      component: () => import('@/views/profile/HistoryView.vue'),
+    },
+    {
+      path: '/perfil/ajuda',
+      name: 'perfil-ajuda',
+      component: () => import('@/views/profile/HelpView.vue'),
+    },
+    {
+      path: '/perfil/termos',
+      name: 'perfil-termos',
+      component: () => import('@/views/profile/TermsView.vue'),
+    },
+    {
+      path: '/perfil/excluir',
+      name: 'perfil-excluir',
+      component: () => import('@/views/profile/DeleteAccountView.vue'),
     },
     {
       path: '/buscar',
       name: 'buscar',
-      component: () => import('@/views/SearchView.vue'),
+      component: () => import('@/views/shop/SearchView.vue'),
     },
     // ---------- Painel do lojista ----------
     {
@@ -67,6 +112,18 @@ const router = createRouter({
       component: () => import('@/views/merchant/SettingsView.vue'),
     },
   ],
+})
+
+router.beforeEach((to, from, next) => {
+  const publicPages = ['/start', '/login', '/register', '/forgot-password', '/reset-password']
+  const authRequired = !publicPages.includes(to.path)
+  const loggedIn = localStorage.getItem('user')
+
+  if (authRequired && !loggedIn) {
+    return next('/start')
+  }
+
+  next()
 })
 
 export default router
