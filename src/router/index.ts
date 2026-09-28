@@ -143,7 +143,8 @@ router.beforeEach((to, from, next) => {
   let user = null
   if (userStr) {
     try {
-      user = JSON.parse(userStr)
+      const parsed = JSON.parse(userStr)
+      user = parsed.user || parsed
     } catch(e) {}
   }
 
@@ -158,10 +159,10 @@ router.beforeEach((to, from, next) => {
     
     // Se logado e tentar acessar login, redireciona
     if (isPublic) {
-      return next(user.type === 'COMERCIANTE' ? '/comerciante' : '/')
+      return next(user.role === 'merchant' ? '/comerciante' : '/')
     }
 
-    if (isMerchantRoute && user.type !== 'COMERCIANTE') {
+    if (isMerchantRoute && user.role !== 'merchant') {
       // Segurança: Cliente tentando acessar área de comerciante
       return next('/')
     }
@@ -170,7 +171,7 @@ router.beforeEach((to, from, next) => {
     // Perfis permitidos compartilhados: /perfil (minha conta)
     const isConsumerRoute = to.path === '/' || to.path.startsWith('/produto') || to.path.startsWith('/carrinho') || to.path.startsWith('/buscar') || to.path.startsWith('/comprovante')
     
-    if (isConsumerRoute && user.type === 'COMERCIANTE') {
+    if (isConsumerRoute && user.role === 'merchant') {
       return next('/comerciante')
     }
   }
