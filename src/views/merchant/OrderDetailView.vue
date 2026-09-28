@@ -89,11 +89,11 @@ function handleCancel() {
           </div>
           <div class="detail-row">
             <span class="detail-key">Valor</span>
-            <span class="detail-val price">R$2,49</span>
+            <span class="detail-val price">R${{ order.price ? order.price.toFixed(2).replace('.', ',') : '--' }}</span>
           </div>
           <div class="detail-row">
             <span class="detail-key">Reservado em</span>
-            <span class="detail-val">26/05 às 14:32</span>
+            <span class="detail-val">{{ order.createdAt || '--' }}</span>
           </div>
           <div class="detail-row">
             <span class="detail-key">Retira até</span>

@@ -3,9 +3,11 @@ import { computed, ref, onMounted } from 'vue'
 import MerchantHeader from '@/components/merchant/MerchantHeader.vue'
 import MerchantBottomNav from '@/components/merchant/MerchantBottomNav.vue'
 import { useMerchantStore } from '@/stores/useMerchantStore'
+import { useToastStore } from '@/stores/useToastStore'
 import { storeToRefs } from 'pinia'
 
 const merchantStore = useMerchantStore()
+const toast = useToastStore()
 const { activeProducts, expiredProducts, soldProducts } = storeToRefs(merchantStore)
 const { togglePause } = merchantStore
 
@@ -56,7 +58,7 @@ function money(v: number) {
           <div class="info">
             <div class="info-top">
               <p class="name">{{ p.name }}</p>
-              <button class="edit-btn">Editar</button>
+              <button class="edit-btn" @click="toast.showToast('Edição de produto em breve!', 'info')">Editar</button>
             </div>
 
             <div class="badges-row">
@@ -95,7 +97,7 @@ function money(v: number) {
           >
             {{ p.paused ? 'Ativar' : 'Pausar' }}
           </button>
-          <button v-else-if="p.status === 'vencido'" class="action-btn discount">+Desc.</button>
+          <button v-else-if="p.status === 'vencido'" class="action-btn discount" @click="toast.showToast('Promoção extra em breve!', 'info')">+Desc.</button>
         </div>
 
         <p v-if="visibleProducts.length === 0" class="empty">Nenhum produto nesta categoria.</p>

@@ -421,7 +421,9 @@ def get_merchant_orders():
             'quantity': o.quantidade,
             'code': o.codigo_reserva,
             'pickupDeadline': o.produto.data_validade,
-            'status': o.status
+            'status': o.status,
+            'price': o.produto.preco_desconto,
+            'createdAt': o.criado_em.strftime('%d/%m às %H:%M')
         })
     return jsonify(result)
 

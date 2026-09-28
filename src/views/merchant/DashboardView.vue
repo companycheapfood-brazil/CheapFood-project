@@ -51,7 +51,7 @@ const peakDayIndex = computed(() => stats.value.dailySales.findIndex((d) => d.va
           <p class="stat-label">Ticket Médio (Semanal)</p>
         </div>
         <div class="stat-card">
-          <p class="stat-value">{{ stats.reservations + stats.dailySales.reduce((a,b)=>a+b.value, 0) > 0 ? '+' : '' }}{{ Math.floor(Math.random() * 12) + 5 }}%</p>
+          <p class="stat-value">{{ stats.reservations + stats.dailySales.reduce((a,b)=>a+b.value, 0) > 0 ? '+' : '' }}14%</p>
           <p class="stat-label">Crescimento (vs Semana Anterior)</p>
         </div>
       </div>

@@ -76,8 +76,8 @@ const visibleOrders = computed(() => {
           </div>
 
           <div v-if="order.status === 'pendente'" class="order-actions">
-            <button class="confirm-btn" @click="confirmPickup(order.id)">Confirmar retirada</button>
-            <button class="cancel-btn" @click="cancelOrder(order.id)">Cancelar</button>
+            <button class="confirm-btn" @click.stop="confirmPickup(order.id)">Confirmar retirada</button>
+            <button class="cancel-btn" @click.stop="cancelOrder(order.id)">Cancelar</button>
           </div>
         </div>
 
