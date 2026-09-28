@@ -139,4 +139,13 @@ const handleForgot = async () => {
   color: #2ecc71;
   text-align: center;
 }
+
+.logo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 0.5rem;
+}
+
 </style>

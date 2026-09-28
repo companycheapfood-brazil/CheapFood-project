@@ -98,9 +98,8 @@ const handleRegister = async () => {
 }
 
 .cart-icon {
-  width: 60px;
-  height: 60px;
-  margin-bottom: 0.5rem;
+  width: 50px;
+  height: 50px;
 }
 
 .logo-text {
@@ -281,4 +280,13 @@ const handleRegister = async () => {
 .merchant-theme .btn-register:hover {
   background-color: #2e2494;
 }
+
+.logo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 0.5rem;
+}
+
 </style>

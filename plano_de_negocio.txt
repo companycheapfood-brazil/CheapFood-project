@@ -1,0 +1,20 @@
+PLANO DE NEGÓCIO
+1. Resumo Executivo
+Nome da startup: CheapFood
+Missão: ajudar os consumidores a economizar nas compras de produtos e contribuir para que os comerciantes tenham lucros com os produtos perto da validade.
+Visão: evitar os desperdícios de produtos e reduzir o prejuízo das empresas.
+Problema que resolve: evitar prejuízos de investimentos em produtos, facilitar o acesso a informação dos descontos dos produtos perto da validade, contribuir para a compra de produtos mais baratos e diminuir a taxa de desperdício de alimento.
+Solução oferecida: um aplicativo de promoções que contribui para os mercados terem maior alcance de suas ofertas de produtos próximos a sua data de vencimento. Facilitando para os clientes terem acesso a essas promoções de maneira rápida e acessível.
+2. Descrição da Empresa
+Produto/serviço principal: um aplicativo de promoções de produtos perto do seu vencimento cadastrando manualmente e colocando a quantidade em estoque, assim que o produto atinge o valor do estoque ele automaticamente trava e os consumidores não podem mais comprar, também contém funcionalidades como adicionar nome, descrição, preço e foto do produto com imagem, e endereço de retirada. Nosso app conterá alertas personalizados quando houver produtos recém postados, também sendo possível adicionar aos favoritos os produtos selecionados, obtendo alertas dos mesmos.
+Modelo de negócio (como gera receita): Assinatura Mensal ou Anual do mercado que está contratando os serviços no App.
+Diferenciais competitivos: foco em promoções de produtos perto do seu vencimento, abrangendo uma ideia com pouca visibilidade digital. Outro diferencial será o plano freemium com o intuito de estigar os usuários a fazer a adesão do plano mensal ou anual, também consideramos a possibilidade de parcerias a depender da proposta feita a nossa empresa.
+3. Análise de Mercado
+Público-alvo: comerciantes e consumidores da rede alimentícia.
+Concorrentes diretos: food to Save, a diferença é que o food to save envia uma caixa com produtos já estabelecidos, já o nosso, o cliente monta o seu próprio carrinho.
+Concorrentes indiretos: delivery de alimentos (ifood, deliveryMuch, 99 food, aplicativos de mercado)
+Oportunidades/tendências:
+Busca por economia devido ao cenário econômico: com o aumento do custo de vida, consumidores estão mais atentos a descontos e promoções, o que favorece aplicativos que ajudam a economizar.
+Estamos em busca da validação com os mercados da região para obter um feedback sobre o nosso App.
+Projetamos uma frequência por parte dos fornecedores semanalmente estejam colocando produtos novos, já os clientes diariamente estariam consumindo os produtos do App.
+Crescente preocupação com desperdício de alimentos: o desperdício alimentar é um problema global que gera prejuízos econômicos e impactos ambientais. Empresas e consumidores estão cada vez mais atentos a soluções sustentáveis, criando um cenário favorável para o CheapFood. Nossa estratégia de diferenciação frente a apps já consolidados e fazer com que as empresas lucrem com produtos que estão perto da data de vencimento expandindo o anuncio desses produtos, pois a informação da venda de produtos perto da validade se limita somente ao modelo presencial, ocasionando uma lacuna para a chegada da informação a um público alvo maior.

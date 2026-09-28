@@ -183,4 +183,13 @@ const handleReset = async () => {
 .error-msg {
   color: #ff0000;
 }
+
+.logo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 0.5rem;
+}
+
 </style>
