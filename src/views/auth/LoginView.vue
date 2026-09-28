@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import AuthService from '@/services/auth.service'
 
 const router = useRouter()
+const route = useRoute()
+
+const isMerchant = computed(() => route.query.role === 'merchant')
 
 const email = ref('')
 const password = ref('')
@@ -24,10 +27,10 @@ const handleLogin = async () => {
 </script>
 
 <template>
-  <div class="auth-layout">
+  <div class="auth-layout" :class="{ 'merchant-theme': isMerchant }">
     <div class="logo-container-small">
       <svg class="cart-icon-small" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M7 18C5.9 18 5.01 18.9 5.01 20C5.01 21.1 5.9 22 7 22C8.1 22 9 21.1 9 20C9 18.9 8.1 18 7 18ZM1 2V4H3L6.6 11.59L5.24 14.04C5.09 14.32 5 14.65 5 15C5 16.1 5.9 17 7 17H19V15H7.42C7.28 15 7.17 14.89 7.17 14.75L7.2 14.63L8.1 13H15.55C16.3 13 16.96 12.59 17.3 11.97L20.88 5.48C20.95 5.34 21 5.17 21 5C21 4.45 20.55 4 20 4H5.21L4.27 2H1ZM17 18C15.9 18 15.01 18.9 15.01 20C15.01 21.1 15.9 22 17 22C18.1 22 19 21.1 19 20C19 18.9 18.1 18 17 18Z" fill="#FF3B69"/>
+        <path d="M7 18C5.9 18 5.01 18.9 5.01 20C5.01 21.1 5.9 22 7 22C8.1 22 9 21.1 9 20C9 18.9 8.1 18 7 18ZM1 2V4H3L6.6 11.59L5.24 14.04C5.09 14.32 5 14.65 5 15C5 16.1 5.9 17 7 17H19V15H7.42C7.28 15 7.17 14.89 7.17 14.75L7.2 14.63L8.1 13H15.55C16.3 13 16.96 12.59 17.3 11.97L20.88 5.48C20.95 5.34 21 5.17 21 5C21 4.45 20.55 4 20 4H5.21L4.27 2H1ZM17 18C15.9 18 15.01 18.9 15.01 20C15.01 21.1 15.9 22 17 22C18.1 22 19 21.1 19 20C19 18.9 18.1 18 17 18Z" />
       </svg>
       <h1 class="logo-text-small">Cheap<span class="logo-text-highlight">Food</span></h1>
       <p class="subtitle-small">Economize. Reduza o desperdício.</p>
@@ -36,7 +39,7 @@ const handleLogin = async () => {
     <div class="auth-box">
       <div class="toggle-container">
         <button class="toggle-btn active">Entrar</button>
-        <button class="toggle-btn" @click="router.push('/register')">Cadastrar</button>
+        <button class="toggle-btn" @click="router.push('/register' + (isMerchant ? '?role=merchant' : ''))">Cadastrar</button>
       </div>
 
       <form @submit.prevent="handleLogin" class="auth-form">
@@ -171,5 +174,65 @@ const handleLogin = async () => {
 
 .mt-4 {
   margin-top: 1.5rem;
+}
+
+/* MERCHANT THEME OVERRIDES */
+.merchant-theme {
+  background-color: #c4b8e8 !important; /* Lilac */
+}
+
+.merchant-theme .cart-icon-small path {
+  fill: #1e1b6e !important; /* Navy */
+}
+
+.merchant-theme .logo-text-small {
+  color: #1e1b6e !important;
+}
+
+.merchant-theme .logo-text-highlight {
+  color: #c9791a !important; /* Orange/Brown */
+}
+
+.merchant-theme .subtitle-small {
+  color: #4a4268 !important;
+}
+
+.merchant-theme .toggle-container {
+  background-color: rgba(255, 255, 255, 0.5) !important;
+}
+
+.merchant-theme .toggle-btn {
+  color: #4a4268 !important;
+}
+
+.merchant-theme .toggle-btn.active {
+  background-color: #3b30b8 !important;
+  color: white !important;
+}
+
+.merchant-theme .form-group label {
+  color: #4a4268 !important;
+}
+
+.merchant-theme .form-group input {
+  background-color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.merchant-theme .form-group input:focus {
+  border-color: #3b30b8 !important;
+  box-shadow: 0 0 0 4px rgba(59, 48, 184, 0.15) !important;
+}
+
+.merchant-theme .forgot-link {
+  color: #3b30b8 !important;
+}
+
+.merchant-theme .btn-primary {
+  background-color: #3b30b8 !important;
+  box-shadow: 0 4px 10px rgba(59, 48, 184, 0.3) !important;
+}
+
+.merchant-theme .btn-primary:hover {
+  background-color: #2e2494 !important;
 }
 </style>

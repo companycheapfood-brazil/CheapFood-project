@@ -67,6 +67,8 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 a {
@@ -79,6 +81,13 @@ button {
   cursor: pointer;
 }
 
-input {
+input, textarea {
   font-family: inherit;
+  -webkit-user-select: auto;
+  user-select: auto;
+  caret-color: auto;
+}
+
+* {
+  caret-color: transparent;
 }

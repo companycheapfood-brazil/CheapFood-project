@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import MerchantHeader from '@/components/merchant/MerchantHeader.vue'
 import MerchantBottomNav from '@/components/merchant/MerchantBottomNav.vue'
-import { useMerchant } from '@/composables/useMerchant'
+import { useMerchantStore } from '@/stores/useMerchantStore'
+import { storeToRefs } from 'pinia'
 
-const { pendingOrders, pickedUpOrders, expiredOrders, confirmPickup, cancelOrder } = useMerchant()
+const merchantStore = useMerchantStore()
+const { pendingOrders, pickedUpOrders, expiredOrders } = storeToRefs(merchantStore)
+const { confirmPickup, cancelOrder } = merchantStore
+
+onMounted(() => {
+  merchantStore.fetchOrders()
+})
 
 const activeTab = ref<'pendentes' | 'retirados' | 'expirados'>('pendentes')
 
@@ -39,7 +46,7 @@ const visibleOrders = computed(() => {
       </div>
 
       <div class="order-list">
-        <div v-for="order in visibleOrders" :key="order.id" class="order-card">
+        <div v-for="order in visibleOrders" :key="order.id" class="order-card" @click="$router.push(`/comerciante/pedidos/${order.id}`)" style="cursor: pointer;">
           <div class="order-top">
             <p class="customer-name">{{ order.customerName }}</p>
             <span

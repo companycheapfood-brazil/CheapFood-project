@@ -1,38 +1,17 @@
-# Resumo do Projeto: CheapFood
+﻿# Estado do Projeto - CheapFood (Antigravity)
 
-## Estado Atual (Atualizado)
+## O Que Foi Feito Recentemente
+- **Design & UI**: Refinamento de bordas, cantos e cursores em todas as telas (Home, Search, Product, Cart, ManageProducts).
+- **Imagens Populares**: Um robô substituiu todas as miniaturas SVG por +45 fotos de altíssima qualidade (comida real), puxadas via Unsplash e servidas pela API Flask (/static/uploads).
+- **Carrinho**: Correção do CSS da imagem .real-image que transbordava do contêiner.
+- **Painel do Comerciante**:
+  - Tabela pedido recriada do zero (incluindo as colunas corretas de cliente_id e estabelecimento_id).
+  - Geração de 15 pedidos dummy (etirado, pendente, expirado) via script para povoar o DB.
+  - Correção na string replacement e bug Vue Compiler na tela /comerciante.
+  - Melhorias no visual do Gráfico de Vendas, que agora agrupa os dias do array stats.dailySales retornado pelo servidor e mostra de fato as cifras exatas na interface, com destaque visual de picos.
+  - O banco SQLite agora é 100% capaz de rodar a rota Lojista (Merchant) com produtos mapeados, faturamento somado dinamicamente e reservas.
 
-### Visão Geral
-O **CheapFood** é uma plataforma focada em sustentabilidade e na redução do desperdício de alimentos. A aplicação conecta comerciantes a consumidores para a venda de produtos alimentícios que estão próximos da data de validade, oferecendo-os com descontos (indicados por selos como `-50% OFF`).
-
-### Arquitetura e Tecnologias
-- **Stack:** Vue 3 (Composition API), Vite, TypeScript.
-- **Roteamento:** Vue Router (`src/router/index.ts`).
-- **Requisições HTTP:** Axios (`src/services/`).
-- **Gerenciamento de Estado/Lógica:** Vue Composables (`src/composables/`).
-
-### Principais Frentes da Aplicação
-
-#### 1. Área do Cliente (Consumidor)
-Telas voltadas para quem vai comprar os alimentos:
-- Vitrine e Busca (`HomeView`, `SearchView`).
-- Visualização do Produto (`ProductView`).
-- Carrinho de Compras (`CartView`).
-- Comprovantes e Perfil (`ReceiptView`, `ProfileView`, `EditProfileView`).
-
-#### 2. Painel do Lojista (Comerciante)
-Telas administrativas para os estabelecimentos (`/comerciante/*`):
-- Dashboard de métricas e acompanhamento (`DashboardView`).
-- Cadastro e gerenciamento do catálogo/estoque (`CreateProductView`, `ManageProductsView`).
-- Acompanhamento de pedidos - pendentes, retirados, etc (`OrdersView`).
-- Configurações do estabelecimento (`SettingsView`).
-
-### O que já fizemos até aqui
-- Leitura e mapeamento de toda a estrutura de pastas e arquitetura (identificando os dois fluxos principais: Cliente vs Lojista).
-- Resolução de um conflito de merge pendente no arquivo `README.md`.
-
-### Próximos Passos
-- (Aguardando definição): Pode envolver criação de novas views, integração dos services com um backend real, ajustes de layout ou refatoração.
-
----
-*Este arquivo serve como memória e contexto para lembrarmos em que pé o projeto está nas próximas interações.*
+## Próximos Passos
+- Refinar detalhes de edição/deleção de produtos no Dashboard.
+- Configurar autenticação JWT (caso necessite escala ou deploy final).
+- Ajustes finos adicionais solicitados pelo usuário.

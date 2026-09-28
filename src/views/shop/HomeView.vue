@@ -3,16 +3,20 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import BottomNav from '@/components/BottomNav.vue'
 import ShopService from '@/services/shop.service'
+import { useCartStore } from '@/stores/useCartStore'
 
 const router = useRouter()
+const cartStore = useCartStore()
+const { addToCart: addCartAction } = cartStore
+
 const search = ref('')
 const activeFilter = ref('Todos')
 const filters = [
-  { name: 'Todos', icon: '' },
-  { name: 'Laticínios', icon: '🥛' },
-  { name: 'Padaria', icon: '🍞' },
-  { name: 'Hortifruti', icon: '🥦' },
-  { name: 'Bebidas', icon: '🧃' }
+  { name: 'Todos', svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>' },
+  { name: 'Laticínios', svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v20"/><path d="M18 2v20"/><path d="M6 12h12"/><path d="M6 6h12"/><path d="M6 18h12"/></svg>' },
+  { name: 'Padaria', svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4.6 13.4-.6 1.5c-.7 1.9.1 3.9 1.8 5.1l.3.2c1.7 1.1 4 .8 5.4-.8l.8-.9c.7-.8 1.9-.8 2.6 0l.8.9c1.4 1.6 3.7 1.9 5.4.8l.3-.2c1.7-1.2 2.5-3.2 1.8-5.1l-.6-1.5"/><path d="M10.5 8.5 9 12"/><path d="M13.5 8.5 15 12"/><path d="m14.5 3.5 1.5 5"/><path d="m9.5 3.5-1.5 5"/><path d="m4.5 5.5 1.5 4"/><path d="m19.5 5.5-1.5 4"/></svg>' },
+  { name: 'Hortifruti', svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></svg>' },
+  { name: 'Bebidas', svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 8 1.75 12.2A2 2 0 0 0 9.71 22h4.58a2 2 0 0 0 1.96-1.8L18 8"/><path d="M5 8h14"/><path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0"/><path d="m12 8 1-6h2"/></svg>' }
 ]
 
 const products = ref<any[]>([])
@@ -32,6 +36,10 @@ const filteredProducts = computed(() => {
 const goToProduct = (id: string) => {
   router.push('/produto/' + id)
 }
+
+const addToCart = (product: any) => {
+  addCartAction(product, 1)
+}
 </script>
 
 <template>
@@ -46,19 +54,25 @@ const goToProduct = (id: string) => {
 
       <div class="search-bar">
         <input type="text" v-model="search" placeholder="Buscar produtos, lojas..." />
-        <span class="search-icon">🔍</span>
+        <span class="search-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </span>
       </div>
     </header>
 
     <main class="content">
       <div class="promo-card">
         <div class="promo-info">
-          <div class="promo-badge">🔥</div>
+          <div class="promo-badge">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" color="#d92d3f"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+          </div>
           <h2 class="promo-title">Até 70% OFF</h2>
           <h3 class="promo-subtitle">em laticínios</h3>
           <p class="promo-desc">Vence amanhã · Supermercado Bom Preço</p>
         </div>
-        <div class="promo-img">🥗</div>
+        <div class="promo-img">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/></svg>
+        </div>
       </div>
 
       <div class="categories">
@@ -69,19 +83,20 @@ const goToProduct = (id: string) => {
           :class="{ active: activeFilter === filter.name }"
           @click="activeFilter = filter.name"
         >
-          <span v-if="filter.icon" class="cat-icon">{{ filter.icon }}</span> {{ filter.name }}
+          <span v-if="filter.svg" class="cat-icon" v-html="filter.svg"></span> {{ filter.name }}
         </button>
       </div>
 
       <div class="section-header">
         <h2>Perto de vencer 🏷️</h2>
-        <a href="#" class="see-all">Ver todos</a>
+        <a href="#" class="see-all" @click.prevent="router.push('/buscar')">Ver todos</a>
       </div>
 
       <div class="product-list">
         <div class="product-card" v-for="product in filteredProducts" :key="product.id" @click="goToProduct(product.id)">
           <div class="product-image">
-            <span class="emoji-img">{{ product.image }}</span>
+            <img v-if="product.image && (product.image.startsWith('/') || product.image.startsWith('http'))" :src="product.image.startsWith('http') ? product.image : `http://localhost:5000${product.image}`" class="real-image" />
+            <span v-else class="emoji-img" v-html="product.image"></span>
           </div>
           <div class="product-details">
             <h3 class="product-name">{{ product.name }}</h3>
@@ -94,7 +109,7 @@ const goToProduct = (id: string) => {
               <span class="tag" :class="{'danger': product.expires_in.includes('hoje')}">{{ product.expires_in }}</span>
             </div>
           </div>
-          <button class="add-btn" @click.stop="goToProduct(product.id)">
+          <button class="add-btn" aria-label="Adicionar ao carrinho" @click.stop="addToCart(product)">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"></line>
               <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -154,7 +169,7 @@ const goToProduct = (id: string) => {
 
 .search-bar input {
   width: 100%;
-  padding: 0.8rem 1rem 0.8rem 1rem;
+  padding: 0.8rem 2.8rem 0.8rem 1rem; /* Added right padding so text doesn't overlap icon */
   border-radius: 12px;
   border: none;
   background-color: white;
@@ -164,10 +179,15 @@ const goToProduct = (id: string) => {
 
 .search-icon {
   position: absolute;
-  right: 1rem;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 2.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #999;
+  line-height: 1;
 }
 
 .content {
@@ -233,8 +253,8 @@ const goToProduct = (id: string) => {
   display: flex;
   gap: 0.8rem;
   overflow-x: auto;
-  padding-bottom: 0.5rem;
-  margin-bottom: 1.5rem;
+  padding: 4px 4px 0.5rem 4px;
+  margin: 0 -4px 1.5rem -4px;
 }
 
 .categories::-webkit-scrollbar {
@@ -255,6 +275,12 @@ const goToProduct = (id: string) => {
   gap: 0.4rem;
   cursor: pointer;
   transition: all 0.2s ease;
+}
+
+.cat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .category-btn:hover {
@@ -329,10 +355,20 @@ const goToProduct = (id: string) => {
   align-items: center;
   justify-content: center;
   border: 1px solid #f0dfb8;
+  overflow: hidden;
+}
+
+.real-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .emoji-img {
   font-size: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .product-details {
@@ -394,7 +430,8 @@ const goToProduct = (id: string) => {
 .add-btn {
   position: absolute;
   right: 1rem;
-  bottom: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
   width: 38px;
   height: 38px;
   border-radius: 50%;
@@ -414,12 +451,14 @@ const goToProduct = (id: string) => {
 
 .add-btn:hover {
   background-color: #e0335c;
-  transform: translateY(-2px) scale(1.05);
+  transform: translateY(-50%) scale(1.05);
   box-shadow: 0 6px 15px rgba(255, 59, 105, 0.45);
 }
 
 .add-btn:active {
-  transform: translateY(0) scale(0.95);
+  transform: translateY(-50%) scale(0.95);
   box-shadow: 0 2px 5px rgba(255, 59, 105, 0.3);
 }
+
 </style>
+

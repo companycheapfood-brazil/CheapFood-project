@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import MerchantHeader from '@/components/merchant/MerchantHeader.vue'
 import MerchantBottomNav from '@/components/merchant/MerchantBottomNav.vue'
-import { useMerchant } from '@/composables/useMerchant'
+import { useMerchantStore } from '@/stores/useMerchantStore'
+import { storeToRefs } from 'pinia'
 
-const { activeProducts, expiredProducts, soldProducts, togglePause } = useMerchant()
+const merchantStore = useMerchantStore()
+const { activeProducts, expiredProducts, soldProducts } = storeToRefs(merchantStore)
+const { togglePause } = merchantStore
+
+onMounted(() => {
+  merchantStore.fetchProducts()
+})
 
 const tabs = [
   { key: 'ativos', label: 'Ativos' },
@@ -44,7 +51,7 @@ function money(v: number) {
 
       <div class="product-list">
         <div v-for="p in visibleProducts" :key="p.id" class="product-card">
-          <div class="thumb">{{ p.icon }}</div>
+          <div class="thumb"><img v-if="p.image && p.image.startsWith('http')" :src="p.image" class="real-image" /><span v-else v-html="p.image || p.icon" class="emoji-img"></span></div>
 
           <div class="info">
             <div class="info-top">
@@ -154,7 +161,7 @@ function money(v: number) {
   padding: 14px;
 }
 
-.thumb {
+.thumb { overflow: hidden; 
   width: 40px;
   height: 40px;
   border-radius: var(--cf-radius-sm);
@@ -271,4 +278,8 @@ function money(v: number) {
   font-size: 13px;
   padding: 24px 0;
 }
+.real-image { width: 100%; height: 100%; object-fit: cover; }
+.emoji-img { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; font-size: 1.5rem; }
 </style>
+
+

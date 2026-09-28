@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import type { Product } from '@/types'
-import { useCart } from '@/composables/useCart'
+import { useCartStore } from '@/stores/useCartStore'
 
 const props = defineProps<{ product: Product }>()
 const router = useRouter()
-const { addToCart } = useCart()
+const cartStore = useCartStore()
+const { addToCart } = cartStore
 
 function openProduct() {
   router.push({ name: 'produto', params: { id: props.product.id } })
@@ -19,7 +20,10 @@ function quickAdd(event: MouseEvent) {
 
 <template>
   <div class="product-card" @click="openProduct">
-    <div class="thumb">{{ product.image }}</div>
+    <div class="thumb">
+      <img v-if="product.image && (product.image.startsWith('/') || product.image.startsWith('http'))" :src="product.image.startsWith('http') ? product.image : `http://localhost:5000${product.image}`" class="real-image" />
+      <span v-else v-html="product.image"></span>
+    </div>
 
     <div class="info">
       <p class="name">{{ product.name }}</p>
@@ -51,6 +55,13 @@ function quickAdd(event: MouseEvent) {
   border-radius: var(--cf-radius-md);
   padding: 12px;
   position: relative;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.product-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .thumb {
@@ -63,6 +74,13 @@ function quickAdd(event: MouseEvent) {
   justify-content: center;
   font-size: 22px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.real-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .info {
@@ -143,3 +161,4 @@ function quickAdd(event: MouseEvent) {
   box-shadow: 0 2px 5px rgba(255, 59, 105, 0.3);
 }
 </style>
+

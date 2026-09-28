@@ -19,6 +19,7 @@ const tabs = ['Economizados', 'Reservas', 'Comida salva']
 const activeTab = ref('Economizados')
 
 const menuItems = [
+  { label: 'Planos', to: '/perfil/planos' },
   { label: 'Histórico de pedidos', to: '/perfil/historico' },
   { label: 'Editar dados', to: '/perfil/editar' },
   { label: 'Central de ajuda', to: '/perfil/ajuda' },

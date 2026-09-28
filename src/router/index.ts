@@ -102,6 +102,12 @@ const router = createRouter({
       component: () => import('@/views/merchant/ManageProductsView.vue'),
     },
     {
+      path: '/comerciante/pedidos/:orderId',
+      name: 'merchant-order-detail',
+      component: () => import('@/views/merchant/OrderDetailView.vue'),
+      props: true,
+    },
+    {
       path: '/comerciante/pedidos',
       name: 'merchant-orders',
       component: () => import('@/views/merchant/OrdersView.vue'),
@@ -110,6 +116,21 @@ const router = createRouter({
       path: '/comerciante/config',
       name: 'merchant-settings',
       component: () => import('@/views/merchant/SettingsView.vue'),
+    },
+    {
+      path: '/comerciante/historico',
+      name: 'merchant-history',
+      component: () => import('@/views/merchant/MerchantHistoryView.vue'),
+    },
+    {
+      path: '/comerciante/planos',
+      name: 'merchant-plans',
+      component: () => import('@/views/merchant/PlansView.vue'),
+    },
+    {
+      path: '/perfil/planos',
+      name: 'perfil-planos',
+      component: () => import('@/views/merchant/PlansView.vue'),
     },
   ],
 })

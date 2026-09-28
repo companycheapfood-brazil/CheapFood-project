@@ -2,16 +2,18 @@
 import { useRouter } from 'vue-router'
 import BottomNav from '@/components/BottomNav.vue'
 import ShopService from '@/services/shop.service'
-import { useCart } from '@/composables/useCart'
+import { useCartStore } from '@/stores/useCartStore'
+import { storeToRefs } from 'pinia'
 
 const router = useRouter()
-const { items: cartItems, updateQuantity, subtotal, totalSavings: savings, checkout: generateCode, clearCart } = useCart()
+const cartStore = useCartStore()
+const { items: cartItems, subtotal, totalSavings: savings } = storeToRefs(cartStore)
+const { updateQuantity, checkout: generateCode, clearCart } = cartStore
 
 const checkout = async () => {
   try {
-    const res = await ShopService.checkout(cartItems as any)
-    const code = generateCode()
-    router.push({ path: '/comprovante', query: { code: (res as any).code || code, subtotal: subtotal.value, savings: savings.value } })
+    const code = await cartStore.checkout()
+    router.push({ path: '/comprovante', query: { code: code, subtotal: subtotal.value, savings: savings.value } })
     clearCart()
   } catch (error) {
     console.error(error)
@@ -33,7 +35,8 @@ const checkout = async () => {
       <div v-else class="cart-items">
         <div class="cart-item" v-for="item in cartItems" :key="item.product.id">
           <div class="item-img">
-            <span class="emoji-img">{{ item.product.image }}</span>
+            <img v-if="item.product.image && (item.product.image.startsWith('/') || item.product.image.startsWith('http'))" :src="item.product.image.startsWith('http') ? item.product.image : `http://localhost:5000${item.product.image}`" class="real-image" />
+            <span v-else class="emoji-img" v-html="item.product.image"></span>
           </div>
           <div class="item-details">
             <h3 class="item-name">{{ item.product.name }}</h3>
@@ -142,17 +145,7 @@ const checkout = async () => {
   border-radius: 12px;
 }
 
-.item-img {
-  width: 50px;
-  height: 50px;
-  background-color: #fdf6e9;
-  border: 1px solid #f0dfb8;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.5rem;
-}
+
 
 .item-details {
   flex: 1;
@@ -197,6 +190,11 @@ const checkout = async () => {
   font-weight: bold;
   cursor: pointer;
   transition: background-color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
 }
 
 .q-btn:hover {
@@ -298,4 +296,25 @@ const checkout = async () => {
   font-size: 0.75rem;
   margin-top: 0.8rem;
 }
+
+.item-img {
+  width: 60px;
+  height: 60px;
+  background-color: #fdf6e9;
+  border: 1px solid #f0dfb8;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.real-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 </style>
+
+
+

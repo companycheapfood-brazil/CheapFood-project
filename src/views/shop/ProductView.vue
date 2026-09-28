@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import BottomNav from '@/components/BottomNav.vue'
 import ShopService from '@/services/shop.service'
-import { useCart } from '@/composables/useCart'
+import { useCartStore } from '@/stores/useCartStore'
 
 const props = defineProps({
   id: {
@@ -14,7 +14,8 @@ const props = defineProps({
 
 const router = useRouter()
 const product = ref<any>(null)
-const { addToCart: addCartAction } = useCart()
+const cartStore = useCartStore()
+const { addToCart: addCartAction } = cartStore
 
 onMounted(async () => {
   product.value = await ShopService.getProduct(props.id)
@@ -30,7 +31,8 @@ const addToCart = () => {
   <div class="screen" v-if="product">
     <header class="product-header">
       <div class="product-image-large">
-        <span class="emoji-img">{{ product.image }}</span>
+        <img v-if="product.image && (product.image.startsWith('/') || product.image.startsWith('http'))" :src="product.image.startsWith('http') ? product.image : `http://localhost:5000${product.image}`" class="real-image-large" />
+        <span v-else class="emoji-img" v-html="product.image"></span>
       </div>
       <h1 class="product-title">{{ product.name }}</h1>
       <p class="product-store">{{ product.store }}</p>
@@ -54,7 +56,7 @@ const addToCart = () => {
         </div>
         <div class="detail-row">
           <span class="label">Categoria</span>
-          <span class="value">🛒 {{ product.category }}</span>
+          <span class="value">• {{ product.category }}</span>
         </div>
         <div class="detail-row">
           <span class="label">Quantidade</span>
@@ -104,10 +106,8 @@ const addToCart = () => {
   text-align: center;
 }
 
-.product-image-large {
-  font-size: 5rem;
-  margin-bottom: 1rem;
-}
+.product-image-large { font-size: 5rem; margin-bottom: 1rem; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 140px; height: 140px; margin: 0 auto 1.5rem auto; border-radius: 20px; background: white; box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+.real-image-large { width: 100%; height: 100%; object-fit: cover; border-radius: 20px; }
 
 .product-title {
   font-size: 1.5rem;
@@ -288,3 +288,6 @@ const addToCart = () => {
   transform: translateY(0) scale(0.98);
 }
 </style>
+
+
+

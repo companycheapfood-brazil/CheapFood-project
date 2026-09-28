@@ -3,11 +3,12 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import MerchantHeader from '@/components/merchant/MerchantHeader.vue'
 import MerchantBottomNav from '@/components/merchant/MerchantBottomNav.vue'
-import { useMerchant } from '@/composables/useMerchant'
+import { useMerchantStore } from '@/stores/useMerchantStore'
 import type { MerchantProduct } from '@/types'
 
 const router = useRouter()
-const { addProduct } = useMerchant()
+const merchantStore = useMerchantStore()
+const { addProduct } = merchantStore
 
 const categories = ['Laticínios', 'Padaria', 'Hortifruti', 'Bebidas', 'Mercearia']
 
@@ -17,6 +18,15 @@ const validity = ref('')
 const originalPrice = ref<number | null>(null)
 const promoPrice = ref<number | null>(null)
 const quantity = ref<number | null>(null)
+
+const imageFile = ref<File | null>(null)
+
+function handleFileChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  if (target.files && target.files.length > 0) {
+    imageFile.value = target.files[0]
+  }
+}
 
 const discountPercent = computed(() => {
   if (!originalPrice.value || !promoPrice.value || originalPrice.value <= 0) return 0
@@ -34,26 +44,55 @@ const canPublish = computed(
     !!quantity.value,
 )
 
-function publish() {
+async function publish() {
   if (!canPublish.value) return
 
-  const newProduct: MerchantProduct = {
-    id: `custom-${Date.now()}`,
-    name: name.value.trim(),
-    category: category.value,
-    icon: '🛍️',
-    originalPrice: originalPrice.value!,
-    promoPrice: promoPrice.value!,
-    quantityAvailable: quantity.value!,
-    reservedCount: 0,
-    validity: validity.value,
-    expiresLabel: 'Vence em breve',
-    status: 'ativo',
-    paused: false,
+  const formData = new FormData()
+  formData.append('nome', name.value.trim())
+  formData.append('categoria', category.value)
+  formData.append('data_validade', validity.value)
+  formData.append('preco_original', originalPrice.value!.toString())
+  formData.append('preco_desconto', promoPrice.value!.toString())
+  formData.append('quantidade', quantity.value!.toString())
+  
+  if (imageFile.value) {
+    formData.append('imagem', imageFile.value)
   }
 
-  addProduct(newProduct)
-  router.push('/comerciante/produtos')
+  try {
+    const response = await fetch('http://127.0.0.1:5000/api/products', {
+      method: 'POST',
+      body: formData
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      
+      const newProduct: MerchantProduct = {
+        id: data.id,
+        name: data.name,
+        category: data.category,
+        icon: data.icon,
+        originalPrice: data.originalPrice,
+        promoPrice: data.price,
+        quantityAvailable: data.quantity,
+        reservedCount: 0,
+        validity: data.validity,
+        expiresLabel: data.expiresLabel,
+        status: 'ativo',
+        paused: false,
+      }
+      
+      addProduct(newProduct)
+      router.push('/comerciante/produtos')
+    } else {
+      console.error('Erro ao cadastrar produto:', await response.text())
+      alert('Erro ao cadastrar produto')
+    }
+  } catch (err) {
+    console.error('Erro na requisição', err)
+    alert('Erro de conexão com o servidor')
+  }
 }
 </script>
 
@@ -74,6 +113,11 @@ function publish() {
             <option value="" disabled>Selecione</option>
             <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
           </select>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Imagem do produto</span>
+          <input type="file" @change="handleFileChange" accept="image/*" />
         </label>
 
         <label class="field">

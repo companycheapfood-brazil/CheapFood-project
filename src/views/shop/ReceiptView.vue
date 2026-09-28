@@ -2,7 +2,6 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import BottomNav from '@/components/BottomNav.vue'
-
 const router = useRouter()
 const route = useRoute()
 
