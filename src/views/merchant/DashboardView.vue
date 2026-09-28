@@ -25,7 +25,7 @@ const peakDayIndex = computed(() => stats.value.dailySales.findIndex((d) => d.va
   <div class="screen">
     <MerchantHeader
       title="Dashboard - Padaria Central"
-      subtitle="ltimos 7 dias"
+      subtitle="Últimos 7 dias"
     />
 
     <main class="content" v-if="!showEmptyState">
