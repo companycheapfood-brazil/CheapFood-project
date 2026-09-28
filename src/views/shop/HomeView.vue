@@ -4,9 +4,11 @@ import { useRouter } from 'vue-router'
 import BottomNav from '@/components/BottomNav.vue'
 import ShopService from '@/services/shop.service'
 import { useCartStore } from '@/stores/useCartStore'
+import { useFavoritesStore } from '@/stores/useFavoritesStore'
 
 const router = useRouter()
 const cartStore = useCartStore()
+const favoritesStore = useFavoritesStore()
 const { addToCart: addCartAction } = cartStore
 
 const search = ref('')

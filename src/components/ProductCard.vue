@@ -16,6 +16,9 @@ function quickAdd(event: MouseEvent) {
   event.stopPropagation()
   addToCart(props.product, 1)
 }
+
+import { useFavoritesStore } from '@/stores/useFavoritesStore'
+const favoritesStore = useFavoritesStore()
 </script>
 
 <template>
@@ -28,11 +31,17 @@ function quickAdd(event: MouseEvent) {
     <div class="info">
       <p class="name">{{ product.name }}</p>
       <p class="store">{{ product.store }}</p>
-      <div class="price-row">
-        <span class="price">R$ {{ product.price.toFixed(2).replace('.', ',') }}</span>
-        <span v-if="product.old_price" class="original-price">
-          R$ {{ product.old_price.toFixed(2).replace('.', ',') }}
-        </span>
+      <div class="price-row" style="display:flex; justify-content:space-between; align-items:center; width: 100%">
+        <div>
+          <span class="price">R$ {{ product.price.toFixed(2).replace('.', ',') }}</span>
+          <span v-if="product.old_price" class="original-price">
+            R$ {{ product.old_price.toFixed(2).replace('.', ',') }}
+          </span>
+        </div>
+        <button class="fav-btn" @click.stop="favoritesStore.toggleFavorite(product.id)">
+          <svg v-if="favoritesStore.isFavorite(product.id)" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#FF3B69" stroke="#FF3B69" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#bfa47a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+        </button>
       </div>
       <span v-if="product.expires_in" class="expires-badge">{{ product.expires_in }}</span>
     </div>
@@ -165,5 +174,25 @@ function quickAdd(event: MouseEvent) {
   transform: translateY(0) scale(0.95);
   box-shadow: 0 2px 5px rgba(255, 59, 105, 0.3);
 }
+
+.price-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.fav-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+}
+.fav-btn:active {
+  transform: scale(0.8);
+}
+
 </style>
 

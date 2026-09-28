@@ -118,6 +118,15 @@ class Produto(db.Model):
             'reviews': []
         }
 
+class Favorito(db.Model):
+    __tablename__ = 'favorito'
+    id = db.Column(db.Integer, primary_key=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
+    produto_id = db.Column(db.Integer, db.ForeignKey('produto.id'), nullable=False)
+    
+    usuario = db.relationship('Usuario', backref=db.backref('favoritos', lazy=True))
+    produto = db.relationship('Produto', backref=db.backref('favoritados', lazy=True))
+
 class Pedido(db.Model):
     __tablename__ = 'pedido'
     id = db.Column(db.Integer, primary_key=True)
@@ -334,6 +343,8 @@ def checkout():
         produto = Produto.query.get(product_id)
         if produto and produto.quantidade >= qty:
             produto.quantidade -= qty
+            if produto.quantidade <= 0:
+                produto.status = 'ESGOTADO'
             pedido = Pedido(cliente_id=user.id, produto_id=produto.id, quantidade=qty, codigo_reserva=code)
             db.session.add(pedido)
             
@@ -468,8 +479,41 @@ def toggle_product_pause(product_id):
 
 
 
+
+@app.route('/api/favorites', methods=['GET'])
+def get_favorites():
+    # in a real app, user_id from token
+    user = Usuario.query.first()
+    if not user:
+        return jsonify([])
+    favs = Favorito.query.filter_by(usuario_id=user.id).all()
+    fav_ids = [f.produto_id for f in favs]
+    return jsonify(fav_ids)
+
+@app.route('/api/favorites/<int:product_id>', methods=['POST', 'DELETE'])
+def toggle_favorite(product_id):
+    user = Usuario.query.first()
+    if not user:
+        return jsonify({'message': 'Unauthorized'}), 401
+        
+    fav = Favorito.query.filter_by(usuario_id=user.id, produto_id=product_id).first()
+    
+    if request.method == 'POST':
+        if not fav:
+            new_fav = Favorito(usuario_id=user.id, produto_id=product_id)
+            db.session.add(new_fav)
+            db.session.commit()
+        return jsonify({'status': 'added', 'product_id': product_id})
+        
+    if request.method == 'DELETE':
+        if fav:
+            db.session.delete(fav)
+            db.session.commit()
+        return jsonify({'status': 'removed', 'product_id': product_id})
+
 # ========================
 # Run
+
 # ========================
 
 if __name__ == '__main__':
