@@ -243,7 +243,10 @@ const addToCart = (product: any) => {
   background-color: rgba(255,255,255,0.3);
   border-radius: 50%;
   width: 60px;
+  min-width: 60px;
   height: 60px;
+  flex-shrink: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -348,7 +351,10 @@ const addToCart = (product: any) => {
 
 .product-image {
   width: 60px;
+  min-width: 60px;
   height: 60px;
+  flex-shrink: 0;
+  overflow: hidden;
   background-color: #fdf6e9;
   border-radius: 12px;
   display: flex;

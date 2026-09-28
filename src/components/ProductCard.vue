@@ -66,7 +66,10 @@ function quickAdd(event: MouseEvent) {
 
 .thumb {
   width: 48px;
+  min-width: 48px;
   height: 48px;
+  flex-shrink: 0;
+  overflow: hidden;
   border-radius: var(--cf-radius-sm);
   background: var(--cf-card-soft);
   display: flex;
@@ -74,6 +77,7 @@ function quickAdd(event: MouseEvent) {
   justify-content: center;
   font-size: 22px;
   flex-shrink: 0;
+  overflow: hidden;
   overflow: hidden;
 }
 
@@ -145,6 +149,7 @@ function quickAdd(event: MouseEvent) {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
   box-shadow: 0 4px 10px rgba(255, 59, 105, 0.3);

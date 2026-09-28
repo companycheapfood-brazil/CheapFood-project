@@ -299,7 +299,9 @@ const checkout = async () => {
 
 .item-img {
   width: 60px;
+  min-width: 60px;
   height: 60px;
+  flex-shrink: 0;
   background-color: #fdf6e9;
   border: 1px solid #f0dfb8;
   border-radius: 12px;

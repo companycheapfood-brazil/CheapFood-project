@@ -163,7 +163,9 @@ function money(v: number) {
 
 .thumb { overflow: hidden; 
   width: 40px;
+  min-width: 40px;
   height: 40px;
+  flex-shrink: 0;
   border-radius: var(--cf-radius-sm);
   background: var(--mc-purple-soft);
   display: flex;
