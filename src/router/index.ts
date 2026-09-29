@@ -97,6 +97,11 @@ const router = createRouter({
       component: () => import('@/views/merchant/CreateProductView.vue'),
     },
     {
+      path: '/comerciante/editar/:id',
+      name: 'merchant-edit',
+      component: () => import('@/views/merchant/EditProductView.vue'),
+    },
+    {
       path: '/comerciante/produtos',
       name: 'merchant-products',
       component: () => import('@/views/merchant/ManageProductsView.vue'),

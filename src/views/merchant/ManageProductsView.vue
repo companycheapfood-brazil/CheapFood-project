@@ -58,7 +58,7 @@ function money(v: number) {
           <div class="info">
             <div class="info-top">
               <p class="name">{{ p.name }}</p>
-              <button class="edit-btn" @click="toast.showToast('Edição de produto em breve!', 'info')">Editar</button>
+              <button class="edit-btn" @click="$router.push('/comerciante/editar/' + p.id)">Editar</button>
             </div>
 
             <div class="badges-row">
