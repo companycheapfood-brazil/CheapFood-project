@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MerchantHeader from '@/components/merchant/MerchantHeader.vue'
 import MerchantBottomNav from '@/components/merchant/MerchantBottomNav.vue'
@@ -13,19 +13,34 @@ const showEmptyState = computed(() => route.query.new === '1')
 const merchantStore = useMerchantStore()
 const { stats } = storeToRefs(merchantStore)
 
+const activePeriod = ref('7days')
+
+const periodLabels: Record<string, string> = {
+  'today': 'Hoje',
+  '7days': 'Últimos 7 dias',
+  'month': 'Este Mês',
+  'year': 'Este Ano'
+}
+
+const subtitleText = computed(() => periodLabels[activePeriod.value])
+
+watch(activePeriod, (newPeriod) => {
+  merchantStore.fetchDashboardStats(newPeriod)
+})
+
 onMounted(() => {
-  merchantStore.fetchDashboardStats()
+  merchantStore.fetchDashboardStats(activePeriod.value)
 })
 
 const maxSales = computed(() => Math.max(1, ...stats.value.dailySales.map((d) => d.value)))
-const peakDayIndex = computed(() => stats.value.dailySales.findIndex((d) => d.value === maxSales.value))
+
 </script>
 
 <template>
   <div class="screen">
     <MerchantHeader
       title="Dashboard - Padaria Central"
-      subtitle="Últimos 7 dias"
+      :subtitle="subtitleText"
     />
 
     <main class="content" v-if="!showEmptyState">
@@ -48,10 +63,10 @@ const peakDayIndex = computed(() => stats.value.dailySales.findIndex((d) => d.va
       <div class="stats-row extra-stats">
         <div class="stat-card">
           <p class="stat-value">R$ {{ (stats.revenueRecovered / (stats.dailySales.length || 1)).toFixed(2).replace('.', ',') }}</p>
-          <p class="stat-label">Ticket Médio (Semanal)</p>
+          <p class="stat-label">Ticket Médio ({{ activePeriod === 'today' ? 'Hoje' : activePeriod === 'month' ? 'Mensal' : activePeriod === 'year' ? 'Anual' : 'Semanal' }})</p>
         </div>
         <div class="stat-card">
-          <p class="stat-value">{{ stats.reservations + stats.dailySales.reduce((a,b)=>a+b.value, 0) > 0 ? '+' : '' }}14%</p>
+          <p class="stat-value">{{ stats.reservations + stats.dailySales.reduce((a,b)=>a+b.value, 0) > 0 ? '+' : '' }}{{ stats.growth }}%</p>
           <p class="stat-label">Crescimento (vs Semana Anterior)</p>
         </div>
       </div>
@@ -60,7 +75,7 @@ const peakDayIndex = computed(() => stats.value.dailySales.findIndex((d) => d.va
         <div class="chart-header">
           <div>
             <p class="chart-title">Faturamento Diário</p>
-            <span class="chart-subtitle">Últimos 7 dias</span>
+            <span class="chart-subtitle">{{ subtitleText }}</span>
           </div>
           <div class="chart-total">
             Total: <strong>R$ {{ stats.revenueRecovered.toFixed(2).replace('.', ',') }}</strong>
@@ -413,6 +428,33 @@ const peakDayIndex = computed(() => stats.value.dailySales.findIndex((d) => d.va
   font-size: 14px;
   font-weight: 700;
 }
+
+.filter-tabs {
+  display: flex;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--cf-radius-md);
+  padding: 4px;
+  margin-bottom: 16px;
+}
+.filter-tabs button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mc-text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.filter-tabs button.active {
+  background: var(--mc-purple);
+  color: #fff;
+  box-shadow: 0 2px 5px rgba(124, 111, 234, 0.3);
+}
+
 </style>
 
 
