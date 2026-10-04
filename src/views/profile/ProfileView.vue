@@ -20,6 +20,7 @@ const activeTab = ref('Economizados')
 
 const menuItems = [
   { label: 'Planos', to: '/perfil/planos' },
+  { label: 'Meus Favoritos', to: '/perfil/favoritos' },
   { label: 'Histórico de pedidos', to: '/perfil/historico' },
   { label: 'Editar dados', to: '/perfil/editar' },
   { label: 'Central de ajuda', to: '/perfil/ajuda' },

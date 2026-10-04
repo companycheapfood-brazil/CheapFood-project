@@ -61,6 +61,11 @@ const router = createRouter({
       component: () => import('@/views/profile/EditProfileView.vue'),
     },
     {
+      path: '/perfil/favoritos',
+      name: 'perfil-favoritos',
+      component: () => import('@/views/profile/FavoritesView.vue'),
+    },
+    {
       path: '/perfil/historico',
       name: 'perfil-historico',
       component: () => import('@/views/profile/HistoryView.vue'),
