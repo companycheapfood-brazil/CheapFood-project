@@ -1,71 +1,71 @@
 # Estado do Projeto — CheapFood (G4C)
-**Última atualização:** 27/09/2026 — 23:39
+**Última atualização:** 03/10/2026
 
 ---
 
-## ✅ O Que Foi Concluído
-
-### Frontend (Vue 3 + Vite + TypeScript)
-- **Migração para Pinia**: Stores globais (`useCartStore`, `useMerchantStore`, `useToastStore`) substituíram os composables antigos.
-- **Transições de Rota**: `<Transition>` aplicado no `<RouterView>` para animações suaves entre páginas.
-- **Toast Notifications**: Sistema global de notificações (`ToastContainer.vue`).
-- **Ícones SVG profissionais**: Todos os ícones antigos (emojis e strings) foram substituídos por SVGs vetoriais (Lucide Icons) — inclusive na tela de Configurações do Comerciante.
-- **Imagens Reais**: +45 fotos de alta qualidade (Unsplash) mapeadas por categoria de produto (leite, pão, carne, frutas, etc.) substituíram os SVGs placeholder.
-- **Logo no Header do Lojista**: Ícone de carrinho + "CheapFood" + badge "LOJISTA" no cabeçalho roxo do comerciante.
-- **Cursor Pointer**: Adicionado em todos os cards clicáveis (Busca, Home, Produtos).
-- **Imagem do Produto (`/produto/:id`)**: Redimensionada com `border-radius`, sombra e `overflow: hidden`.
-- **Carrinho (`/carrinho`)**: Bug de imagem gigante resolvido com `flex-shrink: 0`, `min-width` e `overflow: hidden`.
-- **Botão "+" centralizado**: Na Home, o botão rosa de adicionar ao carrinho está centralizado verticalmente no card.
-
-### Backend (Flask + SQLAlchemy + SQLite)
-- **Tabela `Pedido`** criada com colunas corretas (`cliente_id`, `produto_id`, `quantidade`, `codigo_reserva`, `status`, `criado_em`).
-- **Endpoints do Comerciante**:
-  - `GET /api/merchant/stats` — Estatísticas reais (produtos ativos, receita, reservas, gráfico diário).
-  - `GET /api/merchant/orders` — Lista de pedidos com status.
-  - `PATCH /api/merchant/orders/<id>/status` — Atualizar status do pedido.
-  - `GET /api/merchant/products` — Produtos do estabelecimento.
-  - `POST /api/products` — Upload de imagem via `FormData` (aceita JPG, PNG, WEBP, GIF).
-- **Gráfico de Vendas**: Dados reais agrupados por dia da semana nos últimos 7 dias.
-- **15 pedidos simulados** inseridos no banco para povoar o Dashboard.
-
-### Segurança
-- **RBAC (Role-Based Access Control)** no Vue Router:
-  - Cliente (`CLIENTE`) não acessa rotas `/comerciante/*`.
-  - Comerciante (`COMERCIANTE`) não acessa rotas de consumidor (`/`, `/carrinho`, `/buscar`, `/produto/*`).
-  - Usuários logados são redirecionados se tentarem acessar `/login`.
-
-### Dashboard do Comerciante
-- **Métricas extras**: Ticket Médio Semanal + Crescimento % vs semana anterior.
-- **Gráfico melhorado**: Valores numéricos acima de cada barra, destaque visual no pico, legenda indicadora, totalizador de receita.
-- **Textos corrigidos**: Encoding UTF-8 resolvido (acentos estavam quebrados).
+## 🎯 Visão Geral
+O CheapFood é um protótipo MVP funcional de um marketplace que conecta consumidores a lojistas para a venda de produtos próximos ao vencimento, com desconto. O sistema utiliza Vue 3 (Composition API) + Vite no Frontend e Flask + SQLAlchemy no Backend.
 
 ---
 
-## 🔜 Próximos Passos para Produção
+## ✅ O Que Foi Construído e Resolvido
 
-1. **JWT (flask-jwt-extended)** — Autenticação segura com tokens.
-2. **PostgreSQL** — Migrar de SQLite para banco de produção.
-3. **QR Code real** — Gerar QR para retirada de pedidos.
-4. **Pagamento (Mercado Pago / Stripe)** — Integração de pagamento real.
-5. **Deploy (Vercel + Railway)** — Colocar o app online com domínio próprio.
-6. **PWA (vite-plugin-pwa)** — Tornar o app instalável no celular.
+### 1. Funcionalidades do Consumidor
+- **Vitrine e Busca (`/`, `/buscar`)**: Exibição de produtos. Adicionado um sistema de **Favoritos (❤️)** integrado com o backend (tabela `favorito`), salvando preferências em tempo real e mantendo o layout dos cards intacto.
+- **Meus Favoritos (`/perfil/favoritos`)**: Nova tela adicionada ao menu do Perfil para listar apenas os produtos favoritados.
+- **Carrinho e Checkout (`/carrinho`)**: Bug de imagens gigantes resolvido com uso de Flexbox estrito.
+- **Trava de Estoque Automática (Backend)**: Quando um pedido é finalizado no `/api/checkout` e a `quantidade` do produto chega a zero (0), o status dele muda automaticamente para `ESGOTADO`, tirando-o da visão do cliente mas mantendo-o visível no painel do lojista.
+
+### 2. Funcionalidades do Lojista (Painel Administrativo)
+- **Dashboard com Filtros Temporais (`/comerciante`)**: 
+  - Gráfico e métricas totalmente responsivos aos filtros (Hoje, 7 Dias, Mês, Ano).
+  - Backend calcula as datas precisas e soma receita baseada na coluna `criado_em`.
+  - Métrica de crescimento percentual (%) real calculada comparando com o período anterior equivalente (ex: este mês vs mês passado).
+- **Gestão de Produtos (`/comerciante/produtos`, `/comerciante/editar/:id`)**:
+  - Cadastro (`POST /api/products`) aceita `FormData` com upload real de imagens para a pasta `/static/uploads`.
+  - Botão "Editar" agora é 100% funcional, puxando dados reais e enviando um `PUT /api/products/:id` para atualizar atributos e a imagem no banco.
+- **Gestão de Pedidos (`/comerciante/pedidos`)**:
+  - Resolvido bug de Event Bubbling (clicar no botão acionava o clique do card).
+  - Tela de detalhes do pedido (`/comerciante/pedidos/:id`) refatorada para buscar os dados reais (preço e data de criação formatada) do banco de dados, abandonando mocks fixos ("R$2,49").
+- **Configurações (`/comerciante/config`)**: Totalmente redesenhada, trocando Emojis quebrados por ícones SVG vetoriais bonitos e adicionando botão de Logout real.
+- **UI/UX do Lojista**: Criado um cabeçalho personalizado (`MerchantHeader.vue`) contendo a logo da marca ("CheapFood") perfeitamente alinhada e um selo/badge "LOJISTA".
+
+### 3. Segurança e Base (Core)
+- **Role-Based Access Control (RBAC)** no Vue Router (`router/index.ts`):
+  - Lojista (Merchant) restrito ao `/comerciante`.
+  - Cliente (Consumer) impedido de acessar o painel do lojista.
+  - Correção de bug no guardião de rota que buscava por `user.type` em vez de `user.role` (retornado pela API).
+- **Consistência de Interface**: Alinhamento de todos os SVG de logos corrigido nas 4 telas de Auth (Login, Registro, Esqueci a Senha, etc) garantindo a cor tema `fill="#FF3B69"` em vez de SVG invisível.
+- **Banco de Dados**: Refatorações na tabela `Pedido` (colunas precisas) e adição das tabelas `Favorito` para amarração das entidades.
 
 ---
 
-## 🔑 Contas de Teste
+## 🔜 O Que Ficou Pendente (Para o próximo Desenvolvedor/Modelo)
+
+Existem algumas áreas secundárias que não foram conectadas a lógicas reais de banco ou negócio e seguem maquiadas (mockadas) no Frontend:
+1. **Histórico de Pedidos do Perfil Consumidor**: As abas "Economizados", "Reservas", e os cards da tela `/perfil/historico` ainda estão chumbados no Frontend com os dados "Padaria Central".
+2. **Página de Planos Pro (`/comerciante/planos`)**: Interface existe, mas é falsa, sem conexão de gateway de pagamento ou mudança de flag no BD.
+3. **Módulo de Notificações In-App**: Previsto no Business Plan, mas ainda sem infraestrutura (WebSockets ou tabela de notificação).
+
+### Integrações Recomendadas (Produção)
+- **JWT (flask-jwt-extended)** para blindar endpoints no Backend.
+- **PostgreSQL** para substituir o arquivo `.db` estático.
+- Integração PIX/MercadoPago para validar o fluxo de pagamento.
+
+---
+
+## 🔑 Credenciais de Teste
 | Perfil       | Email                | Senha    |
 |-------------|----------------------|----------|
-| Admin/Lojista | admin@cheapfood.com | admin123 |
-| Consumidor   | joao@email.com      | 123456   |
+| Lojista      | admin@cheapfood.com  | admin123 |
+| Consumidor   | joao@email.com       | 123456   |
 
-## 🛠️ Como Rodar
+## 🛠️ Como Iniciar
 ```bash
-# Frontend
+# Terminal 1 - Frontend (Vue)
 npm run dev
 
-# Backend
-cd backend && python app.py
+# Terminal 2 - Backend (Python/Flask)
+cd backend
+python app.py
 ```
-
-## 📦 Formatos de Upload Aceitos
-`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`
