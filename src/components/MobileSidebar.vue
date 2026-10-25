@@ -21,9 +21,13 @@ const isSwitching = ref(false);
 const isMerchantRoute = computed(() => route.path.startsWith("/comerciante"));
 
 const currentUser = computed(() => {
+  void route.fullPath;
   try {
     const raw = localStorage.getItem("user");
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed.user || parsed;
+    }
   } catch {}
   return {
     name: isMerchantRoute.value ? "Padaria Central" : "João Silva",
@@ -43,13 +47,14 @@ function navigateTo(path: string) {
   router.push(path);
 }
 
-async function switchProfile(role: "consumer" | "merchant") {
+async function switchProfile(role: "consumer" | "merchant", targetPath?: string) {
   isSwitching.value = true;
   try {
     await AuthService.login({
       email: role === "merchant" ? "admin@cheapfood.com" : "joao@email.com",
       password: role === "merchant" ? "admin123" : "123456",
     });
+    cartStore.clearCart();
     toast.addToast(
       role === "merchant"
         ? "Alternado para Painel do Lojista!"
@@ -57,7 +62,7 @@ async function switchProfile(role: "consumer" | "merchant") {
       "success",
     );
     sidebarStore.close();
-    router.push(role === "merchant" ? "/comerciante" : "/");
+    router.push(targetPath || (role === "merchant" ? "/comerciante" : "/"));
   } catch (e) {
     toast.addToast("Erro ao alternar perfil", "error");
   } finally {
@@ -66,8 +71,11 @@ async function switchProfile(role: "consumer" | "merchant") {
 }
 
 function handleLogout() {
+  cartStore.clearCart();
   localStorage.removeItem("user");
   localStorage.removeItem("cf_token");
+  localStorage.removeItem("cf_recent_categories");
+  localStorage.removeItem("cf_recent_product_ids");
   sidebarStore.close();
   router.push("/start");
 }
@@ -76,11 +84,12 @@ const consumerLinks = [
   { to: "/", label: "Início e Para Você", icon: "home" },
   { to: "/buscar", label: "Buscar Ofertas e Leilões", icon: "search" },
   { to: "/carrinho", label: "Meu Carrinho", icon: "shopping-cart", badge: true },
-  { to: "/historico", label: "Histórico e Avaliações", icon: "receipt" },
+  { to: "/perfil/favoritos", label: "Meus Favoritos", icon: "heart" },
+  { to: "/perfil/historico", label: "Histórico e Avaliações", icon: "receipt" },
   { to: "/perfil", label: "Meu Perfil", icon: "user" },
   { to: "/perfil/editar", label: "Editar Dados", icon: "edit" },
-  { to: "/ajuda", label: "Central de Ajuda", icon: "help-circle" },
-  { to: "/termos", label: "Termos e Privacidade", icon: "file-text" },
+  { to: "/perfil/ajuda", label: "Central de Ajuda", icon: "help-circle" },
+  { to: "/perfil/termos", label: "Termos e Privacidade", icon: "file-text" },
 ];
 
 const merchantLinks = [
@@ -213,7 +222,8 @@ const merchantLinks = [
                 type="button"
                 class="nav-link subtle"
                 :class="{ active: route.path === item.to }"
-                @click="navigateTo(item.to)"
+                :disabled="isSwitching"
+                @click="switchProfile('merchant', item.to)"
               >
                 <span class="nav-link-icon">
                   <SvgIcon :name="item.icon" :size="16" />
@@ -249,7 +259,8 @@ const merchantLinks = [
                 type="button"
                 class="nav-link subtle"
                 :class="{ active: route.path === item.to }"
-                @click="navigateTo(item.to)"
+                :disabled="isSwitching"
+                @click="switchProfile('consumer', item.to)"
               >
                 <span class="nav-link-icon">
                   <SvgIcon :name="item.icon" :size="16" />

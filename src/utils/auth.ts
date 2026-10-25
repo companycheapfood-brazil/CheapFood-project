@@ -35,9 +35,5 @@ export function authHeaders(): Record<string, string> {
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
-  const userId = getLoggedUserId();
-  if (userId) {
-    headers["X-User-Id"] = userId;
-  }
   return headers;
 }

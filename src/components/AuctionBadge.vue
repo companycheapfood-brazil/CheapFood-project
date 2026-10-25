@@ -20,18 +20,19 @@ const { now } = useAuctionClock();
 const state = computed(() => computeAuctionState(props.auction, now.value));
 const countdown = computed(() => formatCountdown(state.value.msToEnd));
 
-// Cálculo de estimativa da régua visual do leilão holandês
+// Cálculo da régua visual do leilão híbrido
 const startPrice = computed(() => Number(props.auction.startPrice || 0));
 const currentBid = computed(() => Number(props.auction.highestBid || props.auction.startPrice || 0));
-const minPrice = computed(() => Number(props.auction.minPrice || (startPrice.value * 0.4)));
+const minPrice = computed(() => Number(props.auction.minPrice || (startPrice.value * 1.5)));
 
-// Porcentagem de progresso do decaimento / tempo
+// Porcentagem de progresso do tempo / lances
 const progressPercent = computed(() => {
   if (props.auction.ended || (state.value.msToEnd ?? 0) <= 0) return 100;
-  // Se houver tempo de início e fim
   const endMs = props.auction.endTime ? Date.parse(props.auction.endTime) : 0;
   if (!endMs || endMs <= now.value) return 100;
-  const totalDuration = 2 * 60 * 60 * 1000; // janela de 2h padrão caso não haja start
+  const startMs = props.auction.startTime ? Date.parse(props.auction.startTime) : 0;
+  const totalDuration =
+    startMs && endMs > startMs ? endMs - startMs : 2 * 60 * 60 * 1000;
   const remaining = Math.max(0, endMs - now.value);
   const pct = Math.min(100, Math.max(10, Math.round(((totalDuration - remaining) / totalDuration) * 100)));
   return pct;
@@ -62,7 +63,7 @@ const progressPercent = computed(() => {
     Leilão: {{ formatBRL(auction.highestBid || auction.startPrice) }}
   </span>
 
-  <!-- Painel completo com Régua Visual do Leilão Holandês (tela do produto) -->
+  <!-- Painel completo com Régua Visual do Leilão Híbrido (tela do produto) -->
   <div v-else class="auction-panel">
     <div class="panel-head">
       <div class="panel-title-group">
@@ -82,9 +83,9 @@ const progressPercent = computed(() => {
               d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"
             />
           </svg>
-          Leilão Holandês Ativo
+          Leilão Híbrido Ativo
         </span>
-        <span class="panel-subtitle">Preço dinâmico que cai até o fim do tempo</span>
+        <span class="panel-subtitle">Dispute com lances ou compre agora na hora</span>
       </div>
       <div class="countdown-badge">
         <span class="countdown-label">Termina em:</span>
@@ -92,7 +93,7 @@ const progressPercent = computed(() => {
       </div>
     </div>
 
-    <!-- Régua Visual de Decaimento do Preço -->
+    <!-- Régua Visual do Leilão -->
     <div class="decay-timeline-box">
       <div class="timeline-track">
         <div class="timeline-fill" :style="{ width: `${progressPercent}%` }"></div>
@@ -103,15 +104,15 @@ const progressPercent = computed(() => {
       </div>
       <div class="timeline-milestones">
         <div class="milestone start">
-          <span class="m-label">Início</span>
+          <span class="m-label">Lance Inicial</span>
           <strong class="m-price">{{ formatBRL(startPrice) }}</strong>
         </div>
         <div class="milestone current">
-          <span class="m-label">Vigente Agora</span>
+          <span class="m-label">Maior Lance</span>
           <strong class="m-price highlighted">{{ formatBRL(currentBid) }}</strong>
         </div>
         <div class="milestone min">
-          <span class="m-label">Mínimo</span>
+          <span class="m-label">Compra Direta</span>
           <strong class="m-price">{{ formatBRL(minPrice) }}</strong>
         </div>
       </div>

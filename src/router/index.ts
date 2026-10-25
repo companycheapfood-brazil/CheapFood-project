@@ -141,6 +141,26 @@ const router = createRouter({
       path: "/perfil/planos",
       redirect: "/perfil",
     },
+    {
+      path: "/historico",
+      redirect: "/perfil/historico",
+    },
+    {
+      path: "/ajuda",
+      redirect: "/perfil/ajuda",
+    },
+    {
+      path: "/termos",
+      redirect: "/perfil/termos",
+    },
+    {
+      path: "/favoritos",
+      redirect: "/perfil/favoritos",
+    },
+    {
+      path: "/:pathMatch(.*)*",
+      redirect: "/",
+    },
   ],
 });
 
@@ -159,8 +179,14 @@ router.beforeEach((to, from, next) => {
   if (userStr) {
     try {
       const parsed = JSON.parse(userStr);
-      user = parsed.user || parsed;
-    } catch (e) {}
+      if (parsed && parsed.token) {
+        user = parsed.user || parsed;
+      } else {
+        localStorage.removeItem("user");
+      }
+    } catch (e) {
+      localStorage.removeItem("user");
+    }
   }
 
   if (authRequired && !user) {

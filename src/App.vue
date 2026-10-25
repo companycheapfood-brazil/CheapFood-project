@@ -8,11 +8,13 @@ import SvgIcon from "@/components/ui/SvgIcon.vue";
 import AuthService from "@/services/auth.service";
 import { useToastStore } from "@/stores/useToastStore";
 import { useSidebarStore } from "@/stores/useSidebarStore";
+import { useCartStore } from "@/stores/useCartStore";
 
 const router = useRouter();
 const route = useRoute();
 const toast = useToastStore();
 const sidebarStore = useSidebarStore();
+const cartStore = useCartStore();
 
 const { mobileFrame } = storeToRefs(sidebarStore);
 const demoBarOpen = ref(false);
@@ -25,6 +27,7 @@ async function switchProfile(role: "consumer" | "merchant") {
       email: role === "merchant" ? "admin@cheapfood.com" : "joao@email.com",
       password: role === "merchant" ? "admin123" : "123456",
     });
+    cartStore.clearCart();
     toast.addToast(
       role === "merchant"
         ? "Alternado para Painel do Lojista!"

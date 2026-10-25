@@ -135,7 +135,7 @@ async function handleCancel() {
           <div class="detail-row">
             <span class="detail-key">Retira até</span>
             <span class="detail-val deadline"
-              >{{ order.pickupDeadline }} hoje</span
+              >Hoje até {{ order.pickupDeadline }}</span
             >
           </div>
         </div>

@@ -28,6 +28,7 @@ onMounted(() => {
       name.value = parsed.user.name || "";
       email.value = parsed.user.email || "";
       phone.value = parsed.user.telefone || "(14) 99712-3456";
+      cpf.value = parsed.user.cpf || "412.890.348-10";
       if (parsed.user.foto) {
         fotoUrl.value = resolveImageUrl(parsed.user.foto);
       }
@@ -55,6 +56,7 @@ async function saveProfile() {
     formData.append("email", email.value);
     formData.append("name", name.value);
     formData.append("telefone", phone.value);
+    formData.append("cpf", cpf.value);
     if (selectedFile.value) {
       formData.append("foto", selectedFile.value);
     }

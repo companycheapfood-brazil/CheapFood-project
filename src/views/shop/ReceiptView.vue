@@ -20,6 +20,9 @@ const savings = ref(0);
 const storeName = ref("Padaria & Empório Central");
 const storeAddress = ref("Rua São Paulo, 100 - Centro, Marília/SP");
 const pickupDeadline = ref("Hoje em até 3 horas");
+const paymentLabel = computed(() =>
+  route.query.pay === "pix" ? "PIX Instantâneo" : "Pagamento na Retirada",
+);
 const items = ref<{ name: string; quantity: number; price?: number; total?: number }[]>([]);
 
 const totalUnits = computed(() =>
@@ -155,6 +158,10 @@ function printReceipt() {
         </div>
 
         <div class="summary-row mt">
+          <span class="label">Forma de pagamento</span>
+          <span class="value">{{ paymentLabel }}</span>
+        </div>
+        <div class="summary-row">
           <span class="label">Subtotal</span>
           <span class="value"
             >R$ {{ subtotal.toFixed(2).replace(".", ",") }}</span

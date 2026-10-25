@@ -144,17 +144,11 @@ export const useMerchantStore = defineStore("merchant", () => {
         storeInfo.value = data.store;
         stats.value.storeName = data.store.name;
         stats.value.plan = data.store.plan;
-        toastStore.addToast(
-          data.message || "Dados da loja atualizados!",
-          "success",
-        );
         return true;
       }
-      toastStore.addToast(data.message || "Erro ao atualizar loja", "error");
       return false;
     } catch (e) {
       console.error(e);
-      toastStore.addToast("Erro de conexão ao salvar configurações", "error");
       return false;
     }
   }
@@ -215,9 +209,8 @@ export const useMerchantStore = defineStore("merchant", () => {
         const product = products.value.find((p) => p.id === id);
         if (product) {
           product.paused = !product.paused;
-          product.status = product.paused ? "pausado" : "ativo";
           toastStore.addToast(
-            `Produto ${product.paused ? "pausado" : "reativado"}`,
+            `Produto ${product.paused ? "pausado na vitrine" : "reativado na vitrine"}`,
             "info",
           );
         }
@@ -234,24 +227,14 @@ export const useMerchantStore = defineStore("merchant", () => {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ percent }),
       });
-      const data = await res.json();
       if (res.ok) {
-        toastStore.addToast(
-          data.message || "Desconto extra aplicado com sucesso!",
-          "success",
-        );
         await fetchProducts();
         return true;
       } else {
-        toastStore.addToast(
-          data.message || "Erro ao aplicar desconto",
-          "error",
-        );
         return false;
       }
     } catch (e) {
       console.error(e);
-      toastStore.addToast("Erro ao conectar com o servidor", "error");
       return false;
     }
   }
@@ -272,7 +255,6 @@ export const useMerchantStore = defineStore("merchant", () => {
         if (order) {
           order.status = "retirado";
         }
-        toastStore.addToast("Retirada confirmada com sucesso!", "success");
         return true;
       }
     } catch (e) {
@@ -293,7 +275,6 @@ export const useMerchantStore = defineStore("merchant", () => {
         if (order) {
           order.status = "expirado";
         }
-        toastStore.addToast("Reserva cancelada", "info");
         return true;
       }
     } catch (e) {

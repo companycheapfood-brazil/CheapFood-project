@@ -27,19 +27,47 @@ export interface ReceiptSummary {
 
 export const useCartStore = defineStore("cart", () => {
   const clock = useAuctionClock();
-  const items = ref<CartItem[]>([]);
+  const CART_STORAGE_KEY = "cf_cart_items";
+
+  function loadInitialCart(): CartItem[] {
+    try {
+      const raw = localStorage.getItem(CART_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  }
+
+  function persistCart(list: CartItem[]) {
+    try {
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(list));
+    } catch {}
+  }
+
+  const items = ref<CartItem[]>(loadInitialCart());
   const lastReservationCode = ref("");
   const lastReceipt = ref<ReceiptSummary | null>(null);
 
   const toastStore = useToastStore();
 
   function addToCart(product: Product, quantity = 1) {
+    const maxStock = Number((product as any).quantity ?? 99);
     const existing = items.value.find((i) => i.product.id === product.id);
     if (existing) {
+      if (existing.quantity + quantity > maxStock) {
+        existing.quantity = maxStock;
+        persistCart(items.value);
+        toastStore.addToast(`Limite de estoque atingido (${maxStock} un.)`, "info");
+        return;
+      }
       existing.quantity += quantity;
     } else {
-      items.value.push({ product, quantity });
+      const initialQty = Math.min(quantity, Math.max(1, maxStock));
+      items.value.push({ product, quantity: initialQty });
     }
+    persistCart(items.value);
     ShopService.trackPreference((product as any).category, product.id);
     toastStore.addToast("Produto adicionado ao carrinho!", "success");
   }
@@ -48,10 +76,18 @@ export const useCartStore = defineStore("cart", () => {
     const item = items.value.find((i) => i.product.id === productId);
     if (!item) return;
 
+    const maxStock = Number((item.product as any).quantity ?? 99);
+    if (delta > 0 && item.quantity + delta > maxStock) {
+      toastStore.addToast(`Restam apenas ${maxStock} unidades em estoque`, "info");
+      return;
+    }
+
     item.quantity += delta;
 
     if (item.quantity <= 0) {
       removeFromCart(productId);
+    } else {
+      persistCart(items.value);
     }
   }
 
@@ -59,12 +95,14 @@ export const useCartStore = defineStore("cart", () => {
     const index = items.value.findIndex((i) => i.product.id === productId);
     if (index !== -1) {
       items.value.splice(index, 1);
+      persistCart(items.value);
       toastStore.addToast("Produto removido", "info");
     }
   }
 
   function clearCart() {
     items.value = [];
+    persistCart([]);
   }
 
   async function checkout(): Promise<string> {

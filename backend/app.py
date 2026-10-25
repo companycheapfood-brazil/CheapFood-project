@@ -109,9 +109,10 @@ class Usuario(db.Model):
     email = db.Column(db.String(150), unique=True, nullable=False)
     senha = db.Column(db.String(255), nullable=False)
     telefone = db.Column(db.String(20))
+    cpf = db.Column(db.String(20))
     foto = db.Column(db.String(500))
     tipo = db.Column(db.String(20), nullable=False, default='CLIENTE')
-    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    criado_em = db.Column(db.DateTime, default=datetime.now)
 
 class Estabelecimento(db.Model):
     __tablename__ = 'estabelecimento'
@@ -284,7 +285,7 @@ class Pedido(db.Model):
     quantidade = db.Column(db.Integer, nullable=False)
     codigo_reserva = db.Column(db.String(10), nullable=False)
     status = db.Column(db.String(20), nullable=False, default='pendente')
-    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    criado_em = db.Column(db.DateTime, default=datetime.now)
     # Preço unitário efetivamente cobrado (no "preço que cai" cada pedido pode ter um preço diferente).
     # Pedidos antigos têm NULL → usar valor_unitario(), que cai para produto.preco_desconto.
     preco_unitario = db.Column(db.Float)
@@ -310,7 +311,7 @@ class Avaliacao(db.Model):
     comentario = db.Column(db.Text, nullable=False)
     tags = db.Column(db.String(250))
     resposta_lojista = db.Column(db.Text)
-    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    criado_em = db.Column(db.DateTime, default=datetime.now)
 
     usuario = db.relationship('Usuario', backref=db.backref('avaliacoes', lazy=True))
     produto = db.relationship('Produto', backref=db.backref('avaliacoes', lazy=True))
@@ -407,7 +408,9 @@ class Leilao(db.Model):
 
         return {
             'startPrice': float(self.preco_inicial),
+            'minPrice': float(self.preco_minimo),
             'highestBid': float(highest_bid),
+            'startTime': _iso_utc(self.inicio),
             'endTime': _iso_utc(self.fim),
             'bids': bids_list,
             'winnerId': str(vencedor.usuario_id) if vencedor else None,
@@ -459,6 +462,7 @@ def user_payload(user):
         'email': user.email,
         'role': user_role(user),
         'telefone': user.telefone,
+        'cpf': user.cpf,
         'foto': user.foto,
     }
 
@@ -1230,14 +1234,15 @@ def checkout():
         leilao = produto.leilao_ativo()
         if leilao and leilao.encerrado(now):
             vencedor = leilao.lance_vencedor()
-            if vencedor.usuario_id != user.id:
+            if vencedor and vencedor.usuario_id == user.id:
+                if qty != 1:
+                    db.session.rollback()
+                    return jsonify({'message': 'O lote arrematado no leilão é de 1 unidade'}), 400
+                unit_price = float(vencedor.valor)
+                leilao.ativo = False
+            elif vencedor and produto.quantidade - qty < 1:
                 db.session.rollback()
                 return jsonify({'message': f'O leilão de "{produto.nome}" foi arrematado por outro usuário'}), 403
-            if qty != 1:
-                db.session.rollback()
-                return jsonify({'message': 'O lote arrematado no leilão é de 1 unidade'}), 400
-            unit_price = float(vencedor.valor)
-            leilao.ativo = False
 
         total += unit_price * qty
         total_original += orig_price * qty
@@ -1315,7 +1320,7 @@ def get_order_by_code(user, code):
             'total': line_total
         })
 
-    created_dt = first.criado_em or datetime.utcnow()
+    created_dt = first.criado_em or datetime.now()
     pickup_limit = (created_dt + timedelta(hours=3)).strftime('%H:%M')
 
     return jsonify({
@@ -1442,16 +1447,18 @@ def create_review(user):
 
     autor_nome = (user.nome or 'Cliente CheapFood').strip()
 
-    # Se for avaliação de um pedido específico e já existir, atualiza
+    # Se for avaliação de um pedido específico (ou do mesmo usuário para o mesmo produto) e já existir, atualiza
     rev = None
     if pedido:
         rev = Avaliacao.query.filter_by(pedido_id=pedido.id).first()
+    elif produto:
+        rev = Avaliacao.query.filter_by(usuario_id=user.id, produto_id=produto.id, pedido_id=None).first()
 
     if rev:
         rev.nota = nota
         rev.comentario = comentario
         rev.tags = tags_str
-        rev.criado_em = datetime.utcnow()
+        rev.criado_em = datetime.now()
     else:
         rev = Avaliacao(
             usuario_id=user.id,
@@ -1462,7 +1469,7 @@ def create_review(user):
             nota=nota,
             comentario=comentario,
             tags=tags_str,
-            criado_em=datetime.utcnow()
+            criado_em=datetime.now()
         )
         db.session.add(rev)
 
@@ -1701,6 +1708,8 @@ def get_merchant_orders(_user, estab):
     result = []
     for o in orders:
         unit_price = o.valor_unitario()
+        created_dt = o.criado_em or datetime.now()
+        pickup_limit = (created_dt + timedelta(hours=3)).strftime('%H:%M')
         result.append({
             'id': str(o.id),
             'customerName': o.cliente.nome if o.cliente else 'Cliente',
@@ -1710,7 +1719,7 @@ def get_merchant_orders(_user, estab):
             'productImage': o.produto.imagem if o.produto else None,
             'quantity': o.quantidade,
             'code': o.codigo_reserva,
-            'pickupDeadline': o.produto.data_validade if o.produto else '',
+            'pickupDeadline': pickup_limit,
             'status': o.status,
             'price': unit_price,
             'total': round(unit_price * o.quantidade, 2),
@@ -1756,11 +1765,20 @@ def validate_order_pin(_user, estab):
         .join(Produto, Pedido.produto_id == Produto.id)
         .filter(Produto.estabelecimento_id == estab.id)
         .filter(db.func.upper(Pedido.codigo_reserva) == code)
-        .order_by(Pedido.id.asc())
+        .order_by(Pedido.id.desc())
         .all()
     )
     if not pedidos:
         return jsonify({'message': f'Nenhum pedido da sua loja encontrado com o código {code}'}), 404
+
+    latest = pedidos[0]
+    if latest.criado_em:
+        pedidos = [
+            p for p in pedidos
+            if p.cliente_id == latest.cliente_id and p.criado_em
+            and abs((latest.criado_em - p.criado_em).total_seconds()) <= 120
+        ]
+    pedidos = sorted(pedidos, key=lambda p: p.id)
 
     if confirm:
         for p in pedidos:
@@ -1816,12 +1834,13 @@ def get_merchant_products(_user, estab):
     result = []
     for p in produtos:
         p_dict = p.to_dict()
-        p_dict['paused'] = p.pausado
+        p_dict['paused'] = bool(p.pausado)
         p_dict['promoPrice'] = p_dict['price']
+        reserved_count = sum(o.quantidade for o in (p.pedidos or []) if o.status == 'pendente')
+        p_dict['reservedCount'] = reserved_count
+        p_dict['quantityAvailable'] = p.quantidade
         if p.quantidade <= 0:
             p_dict['status'] = 'vendido'
-        elif p.pausado:
-            p_dict['status'] = 'pausado'
         elif 'Vencido' in p_dict['expires_in']:
             p_dict['status'] = 'vencido'
         else:
@@ -1901,21 +1920,30 @@ def add_bid(product_id):
     if datetime.utcnow() >= leilao.fim:
         return jsonify({'message': 'Este leilão já foi encerrado.'}), 400
 
-    data = request.get_json()
-    if not data or 'valor' not in data:
+    data = request.get_json(silent=True) or {}
+    if 'valor' not in data:
         return jsonify({'message': 'Valor do lance não fornecido'}), 400
 
     try:
         valor = float(data['valor'])
-    except ValueError:
+    except (TypeError, ValueError):
         return jsonify({'message': 'Valor inválido'}), 400
 
-    highest_bid = leilao.preco_inicial
-    if produto.lances:
-        highest_bid = max(l.valor for l in produto.lances)
+    if math.isnan(valor) or math.isinf(valor) or valor <= 0:
+        return jsonify({'message': 'Informe um valor de lance válido'}), 400
 
-    if valor <= highest_bid:
+    if is_merchant(user) and produto.estabelecimento_id == get_or_create_store(user).id:
+        return jsonify({'message': 'O lojista não pode dar lance no próprio produto'}), 403
+
+    has_bids = bool(produto.lances)
+    highest_bid = max(l.valor for l in produto.lances) if has_bids else leilao.preco_inicial
+
+    if has_bids and valor <= highest_bid:
         return jsonify({'message': f'O lance deve ser maior que o maior lance atual (R$ {highest_bid:.2f})'}), 400
+    if not has_bids and valor < leilao.preco_inicial:
+        return jsonify({'message': f'O lance deve ser de pelo menos R$ {leilao.preco_inicial:.2f}'}), 400
+    if produto.preco_desconto and valor >= float(produto.preco_desconto):
+        return jsonify({'message': f'Para pagar R$ {produto.preco_desconto:.2f} ou mais, use o botão Comprar Agora!'}), 400
 
     lance = Lance(produto_id=produto.id, usuario_id=user.id, valor=valor)
     db.session.add(lance)
@@ -2013,6 +2041,8 @@ def update_profile(user):
         user.nome = request.form.get('name').strip()
     if request.form.get('telefone') is not None:
         user.telefone = request.form.get('telefone').strip()
+    if request.form.get('cpf') is not None:
+        user.cpf = request.form.get('cpf').strip()
 
     # Atualiza foto de perfil se enviada
     file = request.files.get('foto') or request.files.get('photo')
@@ -2042,11 +2072,30 @@ def delete_profile(user):
         return jsonify({'message': 'Senha incorreta'}), 400
 
     try:
-        # Se for comerciante, exclui produtos e loja
+        # Limpa avaliações feitas por este usuário
+        Avaliacao.query.filter_by(usuario_id=user.id).delete()
+
+        # Limpa pedidos feitos por este usuário (e devolve estoque de pendentes)
+        user_orders = Pedido.query.filter_by(cliente_id=user.id).all()
+        for o in user_orders:
+            Avaliacao.query.filter_by(pedido_id=o.id).delete()
+            if o.status == 'pendente' and o.produto:
+                o.produto.quantidade += o.quantidade
+                if o.produto.quantidade > 0 and o.produto.status == 'ESGOTADO':
+                    o.produto.status = 'DISPONIVEL'
+            db.session.delete(o)
+
+        # Se for comerciante, exclui produtos (e dependências) e loja
         if is_merchant(user):
-            estab = Estabelecimento.query.filter_by(usuario_id=user.id).first()
-            if estab:
-                for p in estab.produtos:
+            estabs = Estabelecimento.query.filter_by(usuario_id=user.id).all()
+            for estab in estabs:
+                Avaliacao.query.filter_by(estabelecimento_id=estab.id).delete()
+                for p in list(estab.produtos):
+                    Avaliacao.query.filter_by(produto_id=p.id).delete()
+                    Favorito.query.filter_by(produto_id=p.id).delete()
+                    Lance.query.filter_by(produto_id=p.id).delete()
+                    Leilao.query.filter_by(produto_id=p.id).delete()
+                    Pedido.query.filter_by(produto_id=p.id).delete()
                     db.session.delete(p)
                 db.session.delete(estab)
 
@@ -2074,6 +2123,12 @@ def ensure_schema():
             from sqlalchemy import inspect
             inspector = inspect(db.engine)
             tables = inspector.get_table_names()
+
+            if 'usuario' in tables:
+                existing_user_cols = [c['name'] for c in inspector.get_columns('usuario')]
+                if 'cpf' not in existing_user_cols:
+                    db.session.execute(db.text("ALTER TABLE usuario ADD COLUMN cpf VARCHAR(20)"))
+                    print("Migração: adicionada coluna usuario.cpf", flush=True)
 
             if 'estabelecimento' in tables:
                 existing_estab_cols = [c['name'] for c in inspector.get_columns('estabelecimento')]
