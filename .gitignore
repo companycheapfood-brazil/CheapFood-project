@@ -1,2 +1,36 @@
-node_modules/ 
-.env 
+# Dependencies
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Production builds
+dist/
+dist-ssr/
+*.local
+
+# Python & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.sqlite
+*.sqlite3
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+
+# Temporary / scratch scripts
+fix_*.py
+patch_*.py
+download_samples.py
+add_logo.py
+*.deb

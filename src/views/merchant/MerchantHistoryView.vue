@@ -1,74 +1,70 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import MerchantBottomNav from '@/components/merchant/MerchantBottomNav.vue'
-import { merchantStats } from '@/data/merchant'
+import { computed, ref, onMounted } from "vue";
+import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
+import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
+import { useMerchantStore } from "@/stores/useMerchantStore";
+import SvgIcon from "@/components/ui/SvgIcon.vue";
 
-interface HistoryOrder {
-  id: string
-  customerName: string
-  productIcon: string
-  productName: string
-  date: string
-  code: string
-  status: 'retirado' | 'expirado'
-  value: number
-}
+const merchantStore = useMerchantStore();
+const activeTab = ref<"todos" | "retirados" | "expirados">("todos");
 
-const historyOrders: HistoryOrder[] = [
-  {
-    id: 'h1',
-    customerName: 'João Silva',
-    productIcon: '🥛',
-    productName: 'Leite Integral 1L',
-    date: '26/05 16:42',
-    code: 'A7K3',
-    status: 'retirado',
-    value: 2.49,
-  },
-  {
-    id: 'h2',
-    customerName: 'Maria Oliveira',
-    productIcon: '🧀',
-    productName: 'Queijo Mussarela',
-    date: '25/05 18:10',
-    code: 'B2M9',
-    status: 'retirado',
-    value: 15.80,
-  },
-  {
-    id: 'h3',
-    customerName: 'Pedro Costa',
-    productIcon: '🥚',
-    productName: 'Ovos Caipira',
-    date: '24/05 19:00',
-    code: 'C9X1',
-    status: 'expirado',
-    value: 4.90,
-  },
-]
+onMounted(() => {
+  merchantStore.fetchOrders();
+});
 
-const activeTab = ref<'todos' | 'retirados' | 'expirados'>('todos')
+const historyOrders = computed(() => {
+  return merchantStore.orders
+    .filter((o) => o.status === "retirado" || o.status === "expirado")
+    .map((o) => ({
+      id: o.id,
+      customerName: o.customerName || "Cliente",
+      productName: o.productName,
+      quantity: o.quantity || 1,
+      date: o.createdAt || "Hoje",
+      code: o.code,
+      status: o.status as "retirado" | "expirado",
+      value: (o.price || 0) * (o.quantity || 1),
+    }));
+});
 
 const filteredOrders = computed(() => {
-  if (activeTab.value === 'todos') return historyOrders
-  return historyOrders.filter(o => o.status === activeTab.value)
-})
+  if (activeTab.value === "todos") return historyOrders.value;
+  const target = activeTab.value === "retirados" ? "retirado" : "expirado";
+  return historyOrders.value.filter((o) => o.status === target);
+});
 
-const totalCount = historyOrders.length
+const totalCount = computed(() => historyOrders.value.length);
+
+const totalRecovered = computed(() =>
+  historyOrders.value
+    .filter((o) => o.status === "retirado")
+    .reduce((acc, o) => acc + o.value, 0),
+);
 
 function money(v: number) {
-  return `R$${v.toFixed(2).replace('.', ',')}`
+  return `R$ ${v.toFixed(2).replace(".", ",")}`;
 }
 </script>
 
 <template>
   <div class="screen">
-    <header class="history-header">
-      <h1 class="header-title">Histórico de pedidos</h1>
-      <p class="header-subtitle">{{ merchantStats.period }}</p>
-    </header>
+    <MerchantHeader
+      title="Histórico de Vendas"
+      :subtitle="`Total: ${totalCount} pedido(s) finalizados`"
+      backTo="/comerciante/pedidos"
+    />
 
     <main class="content">
+      <div class="summary-banner">
+        <div>
+          <p class="summary-label">Total recuperado em retiradas</p>
+          <p class="summary-value">{{ money(totalRecovered) }}</p>
+        </div>
+        <div class="summary-pill">
+          {{ historyOrders.filter((o) => o.status === "retirado").length }} entregas
+        </div>
+      </div>
+
       <div class="tabs">
         <button
           class="tab"
@@ -82,39 +78,48 @@ function money(v: number) {
           :class="{ active: activeTab === 'retirados' }"
           @click="activeTab = 'retirados'"
         >
-          Retirados
+          Retirados ({{
+            historyOrders.filter((o) => o.status === "retirado").length
+          }})
         </button>
         <button
           class="tab"
           :class="{ active: activeTab === 'expirados' }"
           @click="activeTab = 'expirados'"
         >
-          Expirados
+          Expirados ({{
+            historyOrders.filter((o) => o.status === "expirado").length
+          }})
         </button>
       </div>
 
       <div class="order-list">
-        <div v-for="order in filteredOrders" :key="order.id" class="order-card">
+        <div
+          v-for="order in filteredOrders"
+          :key="order.id"
+          class="order-card"
+          @click="$router.push(`/comerciante/pedidos/${order.id}`)"
+        >
           <div class="order-top">
             <p class="customer-name">{{ order.customerName }}</p>
-            <span
-              class="status-badge"
-              :class="order.status"
-            >
-              {{ order.status === 'retirado' ? 'Retirado' : 'Expirado' }}
+            <span class="status-badge" :class="order.status">
+              {{ order.status === "retirado" ? "Retirado" : "Expirado" }}
             </span>
           </div>
           <p class="order-product">
-            {{ order.productIcon }} {{ order.productName }} · {{ order.date }}
+            <SvgIcon name="shopping-bag" :size="14" />
+            <span>{{ order.productName }} (x{{ order.quantity }}) · {{ order.date }}</span>
           </p>
           <div class="order-bottom">
-            <span class="order-code">Código {{ order.code }}</span>
+            <span class="order-code">Código PIN: <strong>{{ order.code }}</strong></span>
             <span class="order-value">{{ money(order.value) }}</span>
           </div>
         </div>
       </div>
 
-      <p v-if="filteredOrders.length === 0" class="empty">Nenhum pedido encontrado.</p>
+      <p v-if="filteredOrders.length === 0" class="empty">
+        Nenhum pedido encontrado nesta aba.
+      </p>
     </main>
 
     <MerchantBottomNav />
@@ -126,33 +131,48 @@ function money(v: number) {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: #fff;
-  color: #1a1a2e;
-}
-
-.history-header {
-  background: #f5a623;
-  padding: 20px 18px;
-  border-radius: 0 0 22px 22px;
-  flex-shrink: 0;
-}
-
-.header-title {
-  font-size: 17px;
-  font-weight: 800;
-  color: #fff;
-}
-
-.header-subtitle {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.85);
-  margin-top: 2px;
+  background: var(--mc-bg);
+  color: var(--mc-text);
 }
 
 .content {
   flex: 1;
   padding: 16px;
+  padding-bottom: 100px;
   overflow-y: auto;
+}
+
+.summary-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.summary-label {
+  font-size: 11px;
+  color: var(--mc-text-muted);
+  font-weight: 600;
+}
+
+.summary-value {
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--mc-green, #2a9d8f);
+  margin-top: 2px;
+}
+
+.summary-pill {
+  background: #e6f6ec;
+  color: #1f8a4c;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 6px 12px;
+  border-radius: 999px;
 }
 
 .tabs {
@@ -163,9 +183,9 @@ function money(v: number) {
 
 .tab {
   flex-shrink: 0;
-  background: #fff;
-  border: 1px solid #eceaf4;
-  color: #7a7a8c;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  color: var(--mc-text-muted);
   font-size: 11px;
   font-weight: 600;
   padding: 8px 14px;
@@ -175,8 +195,8 @@ function money(v: number) {
 }
 
 .tab.active {
-  background: #f5a623;
-  border-color: #f5a623;
+  background: var(--mc-navy);
+  border-color: var(--mc-navy);
   color: #fff;
 }
 
@@ -187,10 +207,16 @@ function money(v: number) {
 }
 
 .order-card {
-  background: #fff;
-  border: 1px solid #eceaf4;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
   border-radius: 16px;
   padding: 14px;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.order-card:hover {
+  transform: translateY(-1px);
 }
 
 .order-top {
@@ -217,13 +243,16 @@ function money(v: number) {
 }
 
 .status-badge.expirado {
-  color: #7a7a8c;
-  background: #f2f2f5;
+  color: var(--mc-danger);
+  background: var(--mc-danger-soft);
 }
 
 .order-product {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  color: #7a7a8c;
+  color: var(--mc-text-muted);
   margin-top: 6px;
 }
 
@@ -231,22 +260,26 @@ function money(v: number) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 12px;
 }
 
 .order-code {
-  color: #7a7a8c;
+  color: var(--mc-text-muted);
+}
+
+.order-code strong {
+  color: var(--mc-navy);
 }
 
 .order-value {
-  color: #f5a623;
-  font-weight: 700;
+  color: var(--mc-green, #2a9d8f);
+  font-weight: 800;
 }
 
 .empty {
   text-align: center;
-  color: #7a7a8c;
+  color: var(--mc-text-muted);
   font-size: 13px;
   padding: 24px 0;
 }

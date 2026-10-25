@@ -1,36 +1,116 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import BottomNav from '@/components/BottomNav.vue'
+import { ref, onMounted } from "vue";
+import { useRouter } from "vue-router";
+import BottomNav from "@/components/BottomNav.vue";
+import SvgIcon from "@/components/ui/SvgIcon.vue";
+import { useToastStore } from "@/stores/useToastStore";
+import { API_URL, resolveImageUrl } from "@/config/api";
+import { authHeaders } from "@/utils/auth";
+import axios from "axios";
 
-const name = ref('João Silva')
-const email = ref('joao@email.com')
-const phone = ref('(14) 99999-0000')
-const cpf = ref('•••.•••.•••-••')
+const router = useRouter();
+const toast = useToastStore();
+
+const name = ref("");
+const email = ref("");
+const phone = ref("");
+const cpf = ref("412.890.348-10");
+const fotoUrl = ref("");
+const selectedFile = ref<File | null>(null);
+const fileInput = ref<HTMLInputElement | null>(null);
+const isSaving = ref(false);
+
+onMounted(() => {
+  const userData = localStorage.getItem("user");
+  if (userData) {
+    const parsed = JSON.parse(userData);
+    if (parsed.user) {
+      name.value = parsed.user.name || "";
+      email.value = parsed.user.email || "";
+      phone.value = parsed.user.telefone || "(14) 99712-3456";
+      if (parsed.user.foto) {
+        fotoUrl.value = resolveImageUrl(parsed.user.foto);
+      }
+    }
+  }
+});
+
+function triggerFileInput() {
+  fileInput.value?.click();
+}
+
+function handleFileChange(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (file) {
+    selectedFile.value = file;
+    fotoUrl.value = URL.createObjectURL(file);
+  }
+}
+
+async function saveProfile() {
+  isSaving.value = true;
+  try {
+    const formData = new FormData();
+    formData.append("email", email.value);
+    formData.append("name", name.value);
+    formData.append("telefone", phone.value);
+    if (selectedFile.value) {
+      formData.append("foto", selectedFile.value);
+    }
+
+    const res = await axios.put(`${API_URL}/profile`, formData, {
+      headers: { "Content-Type": "multipart/form-data", ...authHeaders() },
+    });
+
+    const userData = localStorage.getItem("user");
+    if (userData) {
+      const parsed = JSON.parse(userData);
+      parsed.user = res.data.user;
+      localStorage.setItem("user", JSON.stringify(parsed));
+    }
+
+    toast.addToast("Perfil atualizado com sucesso!");
+  } catch (error) {
+    console.error("Erro ao salvar perfil:", error);
+    toast.addToast("Erro ao atualizar perfil.", "error");
+  } finally {
+    isSaving.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="screen">
     <header class="edit-header">
+      <button class="back-btn" type="button" @click="router.push('/perfil')" aria-label="Voltar">
+        <SvgIcon name="arrow-left" :size="17" />
+      </button>
       <h1 class="title">Editar perfil</h1>
+      <span style="width: 34px"></span>
     </header>
 
     <main class="content">
       <div class="avatar-section">
-        <div class="avatar-circle">
-          <span class="avatar-emoji">🙋‍♂️</span>
-          <div class="edit-badge"></div>
+        <div class="avatar-circle" @click="triggerFileInput" style="cursor: pointer; overflow: hidden; color: #8c5b16;">
+          <img v-if="fotoUrl" :src="fotoUrl" style="width: 100%; height: 100%; object-fit: cover;" />
+          <SvgIcon v-else name="user" :size="32" />
         </div>
-        <button class="change-photo-btn">Alterar foto</button>
+        <button class="change-photo-btn" @click="triggerFileInput" style="display: inline-flex; align-items: center; gap: 5px;">
+          <SvgIcon name="camera" :size="14" />
+          <span>Alterar foto</span>
+        </button>
+        <input type="file" ref="fileInput" @change="handleFileChange" accept="image/*" style="display: none" />
       </div>
 
-      <form class="edit-form" @submit.prevent>
+      <form class="edit-form" @submit.prevent="saveProfile">
         <div class="form-group">
           <label>Nome completo</label>
-          <input type="text" v-model="name" />
+          <input type="text" v-model="name" required />
         </div>
         <div class="form-group">
           <label>E-mail</label>
-          <input type="email" v-model="email" />
+          <input type="email" v-model="email" disabled />
         </div>
         <div class="form-group">
           <label>Telefone</label>
@@ -38,10 +118,12 @@ const cpf = ref('•••.•••.•••-••')
         </div>
         <div class="form-group">
           <label>CPF</label>
-          <input type="text" v-model="cpf" disabled />
+          <input type="text" v-model="cpf" />
         </div>
 
-        <button class="save-btn">Salvar alterações</button>
+        <button class="save-btn" :disabled="isSaving">
+          {{ isSaving ? 'Salvando...' : 'Salvar alterações' }}
+        </button>
       </form>
     </main>
 
@@ -62,7 +144,24 @@ const cpf = ref('•••.•••.•••-••')
   padding: 2rem 1.5rem 1.5rem 1.5rem;
   border-bottom-left-radius: 20px;
   border-bottom-right-radius: 20px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.back-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  line-height: 0;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.88);
+  color: #333;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .title {
@@ -96,17 +195,6 @@ const cpf = ref('•••.•••.•••-••')
   justify-content: center;
   position: relative;
   font-size: 2rem;
-}
-
-.edit-badge {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 20px;
-  height: 20px;
-  background-color: #f6b55d;
-  border-radius: 50%;
-  border: 2px solid white;
 }
 
 .change-photo-btn {

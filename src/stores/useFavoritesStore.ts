@@ -1,53 +1,70 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+import { getLoggedUserId, authHeaders } from "@/utils/auth";
+import { API_URL } from "@/config/api";
 
-export const useFavoritesStore = defineStore('favorites', () => {
-  const favorites = ref<number[]>([])
+const FAVORITES_API = `${API_URL}/favorites`;
+
+export const useFavoritesStore = defineStore("favorites", () => {
+  // IDs sempre como string, igual a Product.id vindo da API
+  const favorites = ref<string[]>([]);
+
+  const count = computed(() => favorites.value.length);
 
   const fetchFavorites = async () => {
-    try {
-      const res = await fetch('http://127.0.0.1:5000/api/favorites')
-      const data = await res.json()
-      favorites.value = data
-    } catch (e) {
-      console.error(e)
+    if (!getLoggedUserId()) {
+      favorites.value = [];
+      return;
     }
-  }
+    try {
+      const res = await fetch(FAVORITES_API, { headers: authHeaders() });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      favorites.value = Array.isArray(data)
+        ? data.map((id: string | number) => String(id))
+        : [];
+    } catch (e) {
+      console.error("Erro ao carregar favoritos:", e);
+    }
+  };
 
-  const toggleFavorite = async (productId: number) => {
-    const isFav = favorites.value.includes(productId)
-    const method = isFav ? 'DELETE' : 'POST'
-    
+  const toggleFavorite = async (productId: string | number) => {
+    const id = String(productId);
+    const isFav = favorites.value.includes(id);
+    const previous = [...favorites.value];
+
     // Optimistic UI update
-    if (isFav) {
-      favorites.value = favorites.value.filter(id => id !== productId)
-    } else {
-      favorites.value.push(productId)
-    }
+    favorites.value = isFav
+      ? favorites.value.filter((f) => f !== id)
+      : [...favorites.value, id];
 
     try {
-      await fetch(`http://127.0.0.1:5000/api/favorites/${productId}`, {
-        method
-      })
-    } catch (e) {
-      console.error(e)
-      // Revert if failed
-      if (isFav) {
-        favorites.value.push(productId)
-      } else {
-        favorites.value = favorites.value.filter(id => id !== productId)
+      const res = await fetch(`${FAVORITES_API}/${id}`, {
+        method: isFav ? "DELETE" : "POST",
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      // Sincroniza com a lista real do servidor
+      if (Array.isArray(data.favorites)) {
+        favorites.value = data.favorites.map((f: string | number) => String(f));
       }
+    } catch (e) {
+      console.error("Erro ao atualizar favorito:", e);
+      // Revert if failed
+      favorites.value = previous;
     }
-  }
+  };
 
-  const isFavorite = (productId: number) => {
-    return favorites.value.includes(productId)
-  }
+  const isFavorite = (productId: string | number) => {
+    return favorites.value.includes(String(productId));
+  };
 
   return {
     favorites,
+    count,
     fetchFavorites,
     toggleFavorite,
-    isFavorite
-  }
-})
+    isFavorite,
+  };
+});

@@ -1,5 +1,5 @@
-import { merchantProducts, orders } from '@/data/merchant'
-import type { MerchantProduct, Order } from '@/types'
+import { merchantProducts, orders } from "@/data/merchant";
+import type { MerchantProduct, Order } from "@/types";
 
 /**
  * Serviço para o painel do lojista.
@@ -10,8 +10,8 @@ export const MerchantService = {
    */
   async getProducts(): Promise<MerchantProduct[]> {
     return new Promise((resolve) => {
-      setTimeout(() => resolve([...merchantProducts]), 100)
-    })
+      setTimeout(() => resolve([...merchantProducts]), 100);
+    });
   },
 
   /**
@@ -19,16 +19,19 @@ export const MerchantService = {
    */
   async getOrders(): Promise<Order[]> {
     return new Promise((resolve) => {
-      setTimeout(() => resolve([...orders]), 100)
-    })
+      setTimeout(() => resolve([...orders]), 100);
+    });
   },
 
   /**
    * Mock para simular atualização de status de produto.
    */
-  async updateProductStatus(id: string, updates: Partial<MerchantProduct>): Promise<void> {
+  async updateProductStatus(
+    id: string,
+    updates: Partial<MerchantProduct>,
+  ): Promise<void> {
     return new Promise((resolve) => {
-      setTimeout(resolve, 50)
-    })
+      setTimeout(resolve, 50);
+    });
   },
-}
+};

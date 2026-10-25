@@ -1,30 +1,42 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import ShopService from '@/services/shop.service'
-import ProductCard from '@/components/ProductCard.vue'
-import BottomNav from '@/components/BottomNav.vue'
-import { useFavoritesStore } from '@/stores/useFavoritesStore'
+import { ref, computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
+import ShopService from "@/services/shop.service";
+import ProductCard from "@/components/ProductCard.vue";
+import BottomNav from "@/components/BottomNav.vue";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
 
-const router = useRouter()
-const favoritesStore = useFavoritesStore()
-const allProducts = ref<any[]>([])
+const router = useRouter();
+const favoritesStore = useFavoritesStore();
+const allProducts = ref<any[]>([]);
 
 onMounted(async () => {
-  await favoritesStore.fetchFavorites()
-  allProducts.value = await ShopService.getProducts()
-})
+  await favoritesStore.fetchFavorites();
+  allProducts.value = await ShopService.getProducts();
+});
 
 const results = computed(() => {
-  return allProducts.value.filter((p) => favoritesStore.isFavorite(p.id))
-})
+  return allProducts.value.filter((p) => favoritesStore.isFavorite(p.id));
+});
 </script>
 
 <template>
   <div class="screen">
     <header class="header">
       <button class="back-btn" @click="router.back()">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="m15 18-6-6 6-6" />
+        </svg>
       </button>
       <h1 class="title">Meus Favoritos</h1>
     </header>
@@ -32,7 +44,9 @@ const results = computed(() => {
     <main class="content">
       <div class="product-list">
         <ProductCard v-for="p in results" :key="p.id" :product="p" />
-        <p v-if="results.length === 0" class="empty">Você ainda não tem produtos favoritos.</p>
+        <p v-if="results.length === 0" class="empty">
+          Você ainda não tem produtos favoritos.
+        </p>
       </div>
     </main>
 

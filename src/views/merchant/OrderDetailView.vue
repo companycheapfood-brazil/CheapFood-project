@@ -1,83 +1,100 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import MerchantBottomNav from '@/components/merchant/MerchantBottomNav.vue'
-import { useMerchantStore } from '@/stores/useMerchantStore'
-import { storeToRefs } from 'pinia'
+import { computed, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
+import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
+import { useMerchantStore } from "@/stores/useMerchantStore";
+import { useToastStore } from "@/stores/useToastStore";
+import { storeToRefs } from "pinia";
+import SvgIcon from "@/components/ui/SvgIcon.vue";
 
-const route = useRoute()
-const router = useRouter()
-const merchantStore = useMerchantStore()
-const { orders } = storeToRefs(merchantStore)
-const { confirmPickup, cancelOrder } = merchantStore
+const route = useRoute();
+const router = useRouter();
+const merchantStore = useMerchantStore();
+const toast = useToastStore();
+const { orders } = storeToRefs(merchantStore);
+const { confirmPickup, cancelOrder } = merchantStore;
 
 onMounted(() => {
-  if (orders.value.length === 0) merchantStore.fetchOrders()
-})
+  if (orders.value.length === 0) merchantStore.fetchOrders();
+});
 
 const order = computed(() => {
-  const id = route.params.orderId as string
-  return orders.value.find((o: any) => String(o.id) === id)
-})
+  const id = route.params.orderId as string;
+  return orders.value.find((o: any) => String(o.id) === id);
+});
 
 const spacedCode = computed(() => {
-  if (!order.value) return ''
-  return order.value.code.split('').join(' ')
-})
+  if (!order.value) return "";
+  return order.value.code.split("").join(" ");
+});
 
 const statusLabel = computed(() => {
-  if (!order.value) return ''
+  if (!order.value) return "";
   switch (order.value.status) {
-    case 'pendente': return 'Aguardando retirada'
-    case 'retirado': return 'Retirado'
-    case 'expirado': return 'Expirado'
-    default: return ''
+    case "pendente":
+      return "Aguardando retirada";
+    case "retirado":
+      return "Retirado";
+    case "expirado":
+      return "Expirado";
+    default:
+      return "";
   }
-})
+});
 
-function handleConfirm() {
+async function handleConfirm() {
   if (order.value) {
-    confirmPickup(order.value.id)
-    router.push('/comerciante/pedidos')
+    await confirmPickup(order.value.id);
+    toast.addToast("Retirada confirmada com sucesso!", "success");
+    router.push("/comerciante/pedidos");
   }
 }
 
-function handleCancel() {
+async function handleCancel() {
   if (order.value) {
-    cancelOrder(order.value.id)
-    router.push('/comerciante/pedidos')
+    await cancelOrder(order.value.id);
+    toast.addToast("Pedido cancelado e estoque devolvido.", "info");
+    router.push("/comerciante/pedidos");
   }
 }
 </script>
 
 <template>
   <div class="screen">
-    <header class="detail-header">
-      <h1 class="header-title">Detalhe do pedido</h1>
-    </header>
+    <MerchantHeader
+      title="Detalhe do Pedido"
+      subtitle="Conferência de código e retirada"
+      backTo="/comerciante/pedidos"
+    />
 
     <main class="content" v-if="order">
       <div class="code-card">
-        <p class="code-label">CÓDIGO DE RETIRADA</p>
+        <p class="code-label">CÓDIGO DE RETIRADA (PIN)</p>
         <p class="code-value">{{ spacedCode }}</p>
-        <span class="status-badge" :class="order.status">{{ statusLabel }}</span>
+        <span class="status-badge" :class="order.status">{{
+          statusLabel
+        }}</span>
       </div>
 
       <section class="section">
         <p class="section-label">CLIENTE</p>
         <div class="client-card">
           <div class="client-avatar">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <SvgIcon name="user" :size="20" />
           </div>
           <div class="client-info">
             <p class="client-name">{{ order.customerName }}</p>
-            <p class="client-meta">Cliente desde mai/2026 · 4.8 ★</p>
+            <p class="client-meta">
+              Consumidor verificado CheapFood · 4.9
+              <SvgIcon name="star-filled" :size="12" style="color: #f59e0b" />
+            </p>
           </div>
         </div>
       </section>
 
       <section class="section">
-        <p class="section-label">PRODUTO</p>
+        <p class="section-label">DETALHES DA RESERVA</p>
         <div class="detail-table">
           <div class="detail-row">
             <span class="detail-key">Produto</span>
@@ -85,26 +102,53 @@ function handleCancel() {
           </div>
           <div class="detail-row">
             <span class="detail-key">Quantidade</span>
-            <span class="detail-val">{{ order.quantity }} unidade{{ order.quantity > 1 ? 's' : '' }}</span>
+            <span class="detail-val"
+              >{{ order.quantity }} unidade{{
+                order.quantity > 1 ? "s" : ""
+              }}</span
+            >
           </div>
           <div class="detail-row">
-            <span class="detail-key">Valor</span>
-            <span class="detail-val price">R${{ order.price ? order.price.toFixed(2).replace('.', ',') : '--' }}</span>
+            <span class="detail-key">Valor Unitário</span>
+            <span class="detail-val"
+              >R$
+              {{
+                order.price ? order.price.toFixed(2).replace(".", ",") : "--"
+              }}</span
+            >
+          </div>
+          <div class="detail-row">
+            <span class="detail-key">Total da Reserva</span>
+            <span class="detail-val price"
+              >R$
+              {{
+                order.price
+                  ? (order.price * order.quantity).toFixed(2).replace(".", ",")
+                  : "--"
+              }}</span
+            >
           </div>
           <div class="detail-row">
             <span class="detail-key">Reservado em</span>
-            <span class="detail-val">{{ order.createdAt || '--' }}</span>
+            <span class="detail-val">{{ order.createdAt || "Hoje" }}</span>
           </div>
           <div class="detail-row">
             <span class="detail-key">Retira até</span>
-            <span class="detail-val deadline">{{ order.pickupDeadline }} hoje</span>
+            <span class="detail-val deadline"
+              >{{ order.pickupDeadline }} hoje</span
+            >
           </div>
         </div>
       </section>
 
       <div class="actions" v-if="order.status === 'pendente'">
-        <button class="btn-confirm" @click="handleConfirm">✓ Confirmar retirada</button>
-        <button class="btn-cancel" @click="handleCancel">Cancelar pedido</button>
+        <button class="btn-confirm" @click="handleConfirm">
+          <SvgIcon name="check-circle" :size="17" />
+          Confirmar retirada no balcão
+        </button>
+        <button class="btn-cancel" @click="handleCancel">
+          Cancelar pedido
+        </button>
       </div>
     </main>
 
@@ -117,32 +161,20 @@ function handleCancel() {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: #fff;
-  color: #1a1a2e;
-}
-
-.detail-header {
-  background: #f5a623;
-  padding: 20px 18px;
-  border-radius: 0 0 22px 22px;
-  flex-shrink: 0;
-}
-
-.header-title {
-  font-size: 17px;
-  font-weight: 800;
-  color: #fff;
+  background: var(--mc-bg);
+  color: var(--mc-text);
 }
 
 .content {
   flex: 1;
   padding: 16px;
+  padding-bottom: 100px;
   overflow-y: auto;
 }
 
 .code-card {
-  background: #fff;
-  border: 1px solid #eceaf4;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
   border-radius: 16px;
   padding: 24px;
   text-align: center;
@@ -151,8 +183,8 @@ function handleCancel() {
 
 .code-label {
   font-size: 10px;
-  font-weight: 600;
-  color: #7a7a8c;
+  font-weight: 700;
+  color: var(--mc-text-muted);
   letter-spacing: 0.1em;
   margin-bottom: 8px;
 }
@@ -160,7 +192,7 @@ function handleCancel() {
 .code-value {
   font-size: 36px;
   font-weight: 900;
-  color: #f5a623;
+  color: var(--mc-navy);
   letter-spacing: 0.15em;
   margin-bottom: 12px;
 }
@@ -195,8 +227,8 @@ function handleCancel() {
 
 .section-label {
   font-size: 10px;
-  font-weight: 600;
-  color: #7a7a8c;
+  font-weight: 700;
+  color: var(--mc-text-muted);
   letter-spacing: 0.08em;
   margin-bottom: 10px;
 }
@@ -205,8 +237,8 @@ function handleCancel() {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: #fff;
-  border: 1px solid #eceaf4;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
   border-radius: 16px;
   padding: 14px;
 }
@@ -215,7 +247,8 @@ function handleCancel() {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: #fdf6e9;
+  background: var(--mc-purple-soft);
+  color: var(--mc-navy);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -229,14 +262,17 @@ function handleCancel() {
 }
 
 .client-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
-  color: #7a7a8c;
+  color: var(--mc-text-muted);
   margin-top: 2px;
 }
 
 .detail-table {
-  background: #fff;
-  border: 1px solid #eceaf4;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
   border-radius: 16px;
   padding: 14px;
 }
@@ -246,7 +282,7 @@ function handleCancel() {
   justify-content: space-between;
   align-items: center;
   padding: 8px 0;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid var(--mc-border);
 }
 
 .detail-row:last-child {
@@ -255,21 +291,22 @@ function handleCancel() {
 
 .detail-key {
   font-size: 13px;
-  color: #7a7a8c;
+  color: var(--mc-text-muted);
 }
 
 .detail-val {
   font-size: 13px;
   font-weight: 700;
-  color: #1a1a2e;
+  color: var(--mc-text);
 }
 
 .detail-val.price {
-  color: #f5a623;
+  color: var(--mc-green, #2a9d8f);
+  font-size: 15px;
 }
 
 .detail-val.deadline {
-  color: #f5a623;
+  color: var(--cf-pink);
   font-weight: 700;
 }
 
@@ -282,7 +319,11 @@ function handleCancel() {
 
 .btn-confirm {
   width: 100%;
-  background: #f5a623;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--mc-navy);
   color: #fff;
   border: none;
   border-radius: 12px;
@@ -295,8 +336,8 @@ function handleCancel() {
 .btn-cancel {
   width: 100%;
   background: transparent;
-  border: 1px solid #f5a623;
-  color: #f5a623;
+  border: 1px solid var(--mc-danger);
+  color: var(--mc-danger);
   border-radius: 12px;
   padding: 15px;
   font-size: 14px;

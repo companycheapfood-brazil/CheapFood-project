@@ -1,0 +1,19 @@
+{
+  "name": "CheapFood - Combate ao Desperdício",
+  "short_name": "CheapFood",
+  "description": "Compre alimentos frescos com até 70% de desconto contra o desperdício.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#fbfaf8",
+  "theme_color": "#f5a623",
+  "categories": ["food", "shopping", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

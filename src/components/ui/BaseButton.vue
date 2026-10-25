@@ -1,25 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed } from "vue";
 
 const props = defineProps<{
-  variant?: 'primary' | 'secondary' | 'danger'
-  type?: 'button' | 'submit' | 'reset'
-  disabled?: boolean
-}>()
+  variant?: "primary" | "secondary" | "danger";
+  type?: "button" | "submit" | "reset";
+  disabled?: boolean;
+}>();
 
 const emit = defineEmits<{
-  (e: 'click', event: MouseEvent): void
-}>()
+  (e: "click", event: MouseEvent): void;
+}>();
 
 const btnClass = computed(() => {
-  return `base-btn base-btn-${props.variant || 'primary'}`
-})
+  return `base-btn base-btn-${props.variant || "primary"}`;
+});
 </script>
 
 <template>
-  <button 
-    :class="btnClass" 
-    :type="type || 'button'" 
+  <button
+    :class="btnClass"
+    :type="type || 'button'"
     :disabled="disabled"
     @click="emit('click', $event)"
   >

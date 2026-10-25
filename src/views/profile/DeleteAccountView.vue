@@ -1,38 +1,79 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import BottomNav from '@/components/BottomNav.vue'
-import AuthService from '@/services/auth.service'
+import { ref } from "vue";
+import { useRouter } from "vue-router";
+import BottomNav from "@/components/BottomNav.vue";
+import SvgIcon from "@/components/ui/SvgIcon.vue";
+import AuthService from "@/services/auth.service";
+import { API_URL } from "@/config/api";
+import { authHeaders } from "@/utils/auth";
+import { useToastStore } from "@/stores/useToastStore";
 
-const router = useRouter()
-const password = ref('')
+const router = useRouter();
+const toast = useToastStore();
+const password = ref("");
+const isDeleting = ref(false);
 
 const deleteAccount = async () => {
-  // Mock delete account
-  await AuthService.logout()
-  router.push('/start')
-}
+  if (!password.value) {
+    toast.addToast("Por favor, digite sua senha.", "error");
+    return;
+  }
+
+  isDeleting.value = true;
+  try {
+    const res = await fetch(`${API_URL}/profile`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ password: password.value }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      toast.addToast("Conta excluída com sucesso.", "success");
+      await AuthService.logout();
+      router.push("/start");
+    } else {
+      toast.addToast(data.message || "Erro ao excluir conta", "error");
+    }
+  } catch (e) {
+    toast.addToast("Erro de conexão ao excluir conta", "error");
+  } finally {
+    isDeleting.value = false;
+  }
+};
 </script>
 
 <template>
   <div class="screen">
     <header class="delete-header">
+      <button class="back-btn" @click="router.push('/perfil')" aria-label="Voltar">
+        <SvgIcon name="arrow-left" :size="17" />
+      </button>
       <h1 class="title">Excluir conta</h1>
+      <span style="width: 34px"></span>
     </header>
 
     <main class="content">
       <div class="warning-section">
-        <div class="warning-icon"></div>
+        <div class="warning-icon" style="color: #ff3b69">
+          <SvgIcon name="alert-triangle" :size="30" />
+        </div>
         <h2 class="warning-title">Tem certeza?</h2>
-        <p class="warning-desc">Esta ação é permanente e não pode ser desfeita. Você perderá todo o histórico de pedidos e reservas.</p>
+        <p class="warning-desc">
+          Esta ação é permanente e não pode ser desfeita. Você perderá todo o
+          histórico de pedidos e reservas.
+        </p>
       </div>
 
       <div class="info-card">
         <h3 class="info-title">O que será excluído:</h3>
         <ul class="info-list">
-          <li><span class="cross">✕</span> Perfil e dados pessoais</li>
-          <li><span class="cross">✕</span> Histórico de pedidos</li>
-          <li><span class="cross">✕</span> Favoritos e avaliações</li>
+          <li><span class="cross"><SvgIcon name="x" :size="14" /></span> Perfil e dados pessoais</li>
+          <li><span class="cross"><SvgIcon name="x" :size="14" /></span> Histórico de pedidos</li>
+          <li><span class="cross"><SvgIcon name="x" :size="14" /></span> Favoritos e avaliações</li>
         </ul>
       </div>
 
@@ -42,8 +83,10 @@ const deleteAccount = async () => {
       </div>
 
       <div class="actions">
-        <button class="btn-delete" @click="deleteAccount">Excluir minha conta</button>
-        <button class="btn-cancel" @click="router.back()">Cancelar</button>
+        <button class="btn-delete" :disabled="isDeleting" @click="deleteAccount">
+          {{ isDeleting ? "Excluindo..." : "Excluir minha conta" }}
+        </button>
+        <button class="btn-cancel" @click="router.push('/perfil')">Cancelar</button>
       </div>
     </main>
 
@@ -62,7 +105,26 @@ const deleteAccount = async () => {
 .delete-header {
   background-color: #f6b55d;
   padding: 2rem 1.5rem 1.5rem 1.5rem;
-  text-align: center;
+  border-bottom-left-radius: 20px;
+  border-bottom-right-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.back-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  line-height: 0;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.88);
+  color: #333;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .title {
@@ -91,9 +153,13 @@ const deleteAccount = async () => {
 .warning-icon {
   width: 70px;
   height: 70px;
-  background-color: #f9f9f9;
+  background-color: #fff0f3;
   border-radius: 50%;
   margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
 }
 
 .warning-title {

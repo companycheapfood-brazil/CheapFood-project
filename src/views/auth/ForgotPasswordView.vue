@@ -1,52 +1,113 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import AuthService from '@/services/auth.service'
+import { ref } from "vue";
+import { useRouter } from "vue-router";
+import AuthService from "@/services/auth.service";
+import { useToastStore } from "@/stores/useToastStore";
 
-const router = useRouter()
-const email = ref('')
-const message = ref('')
+const router = useRouter();
+const toastStore = useToastStore();
+const email = ref("");
+const message = ref("");
+const isError = ref(false);
+const linkReady = ref(false);
+const resetToken = ref("");
 
 const handleForgot = async () => {
+  isError.value = false;
+  linkReady.value = false;
   try {
-    await AuthService.forgotPassword(email.value)
-    message.value = 'Link de redefinição enviado! Verifique seu e-mail.'
-  } catch (error) {
-    message.value = 'Ocorreu um erro. Tente novamente.'
+    const res = await AuthService.forgotPassword(email.value);
+    resetToken.value = res?.data?.resetToken || "";
+    message.value = res?.data?.emailSent
+      ? "Enviamos um link para o seu e-mail com as instruções de redefinição."
+      : "E-mail validado! Clique no botão abaixo para definir sua nova senha.";
+    linkReady.value = true;
+    toastStore.addToast("Solicitação processada com sucesso!", "success");
+  } catch (error: any) {
+    isError.value = true;
+    message.value =
+      error?.response?.data?.message || "E-mail não encontrado no sistema.";
+    toastStore.addToast(message.value, "error");
   }
+};
+
+function goToReset() {
+  router.push({
+    path: "/reset-password",
+    query: {
+      email: email.value,
+      ...(resetToken.value ? { token: resetToken.value } : {}),
+    },
+  });
 }
 </script>
 
 <template>
   <div class="auth-layout reset-layout">
     <div class="reset-header">
-      <button class="back-link" @click="router.back()">Voltar</button>
+      <button class="back-link" @click="router.back()">← Voltar</button>
     </div>
 
     <div class="reset-content">
       <div class="icon-circle">
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="lock-icon">
-          <path d="M18 8H17V6C17 3.24 14.76 1 12 1C9.24 1 7 3.24 7 6V8H6C4.9 8 4 8.9 4 10V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V10C20 8.9 19.1 8 18 8ZM9 6C9 4.34 10.34 3 12 3C13.66 3 15 4.34 15 6V8H9V6ZM12 17C10.9 17 10 16.1 10 15C10 13.9 10.9 13 12 13C13.1 13 14 13.9 14 15C14 16.1 13.1 17 12 17Z" fill="white"/>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          class="lock-icon"
+        >
+          <path
+            d="M18 8H17V6C17 3.24 14.76 1 12 1C9.24 1 7 3.24 7 6V8H6C4.9 8 4 8.9 4 10V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V10C20 8.9 19.1 8 18 8ZM9 6C9 4.34 10.34 3 12 3C13.66 3 15 4.34 15 6V8H9V6ZM12 17C10.9 17 10 16.1 10 15C10 13.9 10.9 13 12 13C13.1 13 14 13.9 14 15C14 16.1 13.1 17 12 17Z"
+            fill="white"
+          />
         </svg>
       </div>
 
       <h2 class="reset-title">Recuperar senha</h2>
-      <p class="reset-subtitle">Informe seu e-mail e enviaremos um link de redefinição.</p>
+      <p class="reset-subtitle">
+        Informe seu e-mail cadastrado para redefinir sua senha de acesso.
+      </p>
 
       <form @submit.prevent="handleForgot" class="auth-form mt-4">
         <div class="form-group">
           <label>E-mail cadastrado</label>
-          <input type="email" v-model="email" placeholder="seu@email.com" required />
+          <input
+            type="email"
+            v-model="email"
+            placeholder="seu@email.com"
+            required
+          />
         </div>
 
-        <button type="submit" class="btn btn-primary">Enviar link de recuperação</button>
+        <button type="submit" class="btn btn-primary">
+          Validar e-mail de recuperação
+        </button>
       </form>
 
-      <p v-if="message" class="info-msg">{{ message }}</p>
+      <p
+        v-if="message"
+        class="info-msg"
+        :style="{ color: isError ? '#d92d3f' : '#1f8a4c' }"
+      >
+        {{ message }}
+      </p>
+
+      <button
+        v-if="linkReady"
+        type="button"
+        class="btn btn-primary"
+        style="margin-top: 12px; background-color: #1f8a4c"
+        @click="goToReset"
+      >
+        Criar Nova Senha Agora →
+      </button>
 
       <div class="info-box">
         <h4>Como funciona?</h4>
-        <p>Enviaremos um e-mail com um link seguro. Verifique também sua caixa de spam.</p>
+        <p>
+          Após validar seu e-mail cadastrado, você poderá cadastrar uma nova
+          senha imediatamente.
+        </p>
       </div>
     </div>
   </div>
@@ -147,5 +208,4 @@ const handleForgot = async () => {
   gap: 12px;
   margin-bottom: 0.5rem;
 }
-
 </style>
