@@ -1,13 +1,13 @@
 from app import app, db, Usuario, Estabelecimento, Produto, Pedido, Leilao, Lance, Favorito, Avaliacao, ensure_schema
 from werkzeug.security import generate_password_hash
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def seed_tcc():
     ensure_schema()
     with app.app_context():
         now_local = datetime.now()
-        now_utc = datetime.utcnow()
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # 1. Garantir usuários principais de demonstração
         def get_or_create_user(email, nome, senha, tipo, telefone):
@@ -25,6 +25,7 @@ def seed_tcc():
             else:
                 u.nome = nome
                 u.tipo = tipo
+                u.foto = None
                 if not u.telefone:
                     u.telefone = telefone
             return u

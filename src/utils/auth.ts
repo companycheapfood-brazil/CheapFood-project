@@ -37,3 +37,24 @@ export function authHeaders(): Record<string, string> {
   }
   return headers;
 }
+
+/**
+ * Trata respostas 401 (Unauthorized) limpando a sessão expirada/inválida
+ * e redirecionando para a tela de login.
+ */
+export function handleUnauthorized(status: number): boolean {
+  if (status === 401) {
+    localStorage.removeItem("user");
+    localStorage.removeItem("cf_token");
+    localStorage.removeItem("cf_cart_items");
+    const publicPaths = ["/login", "/register", "/recuperar-senha"];
+    if (
+      typeof window !== "undefined" &&
+      !publicPaths.includes(window.location.pathname)
+    ) {
+      window.location.href = "/login";
+    }
+    return true;
+  }
+  return false;
+}

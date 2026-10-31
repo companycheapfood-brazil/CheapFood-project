@@ -6,7 +6,7 @@ import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
 import { useToastStore } from "@/stores/useToastStore";
 import { useMerchantStore } from "@/stores/useMerchantStore";
 import { API_URL, isImageUrl, resolveImageUrl } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
 
 const router = useRouter();
 const route = useRoute();
@@ -24,6 +24,11 @@ const form = ref({
   quantidade: 0,
   data_validade: "",
 });
+
+const isAuction = ref(false);
+const auctionStartPrice = ref<number | "">("");
+const auctionDurationValue = ref<number | "">(2);
+const auctionDurationUnit = ref<"minutes" | "hours" | "days">("hours");
 
 const file = ref<File | null>(null);
 const previewUrl = ref<string | null>(null);
@@ -51,6 +56,16 @@ onMounted(async () => {
         quantidade: data.quantity,
         data_validade: data.validity,
       };
+      if (data.auction && data.auction.active) {
+        isAuction.value = true;
+        auctionStartPrice.value = data.auction.startPrice ?? "";
+        if (data.auction.endTime) {
+          const remainingMs = new Date(data.auction.endTime).getTime() - Date.now();
+          const remainingHours = Math.max(1, Math.round(remainingMs / (1000 * 60 * 60)));
+          auctionDurationValue.value = remainingHours;
+          auctionDurationUnit.value = "hours";
+        }
+      }
       const img = data.image || data.imagem || data.icon;
       if (isImageUrl(img)) {
         previewUrl.value = resolveImageUrl(img);
@@ -70,6 +85,17 @@ function handleFile(e: Event) {
 }
 
 async function saveProduct() {
+  if (isAuction.value) {
+    if (!auctionStartPrice.value || !auctionDurationValue.value) {
+      toast.addToast("Preencha o lance inicial e o tempo de duração do leilão!", "error");
+      return;
+    }
+    if (Number(auctionStartPrice.value) > Number(form.value.preco_desconto)) {
+      toast.addToast("O lance inicial não pode ser maior que o preço de compra imediata.", "error");
+      return;
+    }
+  }
+
   isLoading.value = true;
   try {
     const formData = new FormData();
@@ -80,6 +106,25 @@ async function saveProduct() {
     formData.append("preco_desconto", String(form.value.preco_desconto));
     formData.append("quantidade", String(form.value.quantidade));
     formData.append("data_validade", form.value.data_validade);
+
+    if (isAuction.value) {
+      formData.append("modo", "LEILAO");
+      formData.append("preco_inicial", String(auctionStartPrice.value));
+      formData.append("preco_minimo", String(form.value.preco_desconto));
+
+      const now = new Date();
+      const val = Number(auctionDurationValue.value);
+      if (auctionDurationUnit.value === "minutes") {
+        now.setMinutes(now.getMinutes() + val);
+      } else if (auctionDurationUnit.value === "hours") {
+        now.setHours(now.getHours() + val);
+      } else if (auctionDurationUnit.value === "days") {
+        now.setDate(now.getDate() + val);
+      }
+      formData.append("data_fim_leilao", now.toISOString());
+    } else {
+      formData.append("modo", "FIXO");
+    }
 
     if (file.value) {
       formData.append("imagem", file.value);
@@ -93,12 +138,15 @@ async function saveProduct() {
       body: formData,
     });
 
+    if (handleUnauthorized(res.status)) return;
+
     if (res.ok) {
       await merchantStore.fetchProducts();
       toast.addToast("Produto atualizado com sucesso!", "success");
       router.push("/comerciante/produtos");
     } else {
-      toast.addToast("Erro ao atualizar produto", "error");
+      const errData = await res.json().catch(() => ({}));
+      toast.addToast(errData.message || "Erro ao atualizar produto", "error");
     }
   } catch (e) {
     console.error(e);
@@ -182,6 +230,18 @@ async function saveProduct() {
 
         <div class="form-section">
           <h3 class="section-title">Precificação e Estoque</h3>
+
+          <div class="mode-toggle">
+            <label class="toggle-label">
+              <input type="checkbox" v-model="isAuction" />
+              <span class="slider"></span>
+              <span class="toggle-text">Habilitar Leilão Híbrido (Lances + Compra Imediata) 🔨</span>
+            </label>
+            <p class="mode-hint" v-if="isAuction">
+              Os clientes poderão dar lances a partir de um valor mínimo OU comprar imediatamente pelo preço promocional.
+            </p>
+          </div>
+
           <div class="row">
             <label class="field half">
               <span class="field-label">Original (R$)</span>
@@ -196,7 +256,7 @@ async function saveProduct() {
             </label>
 
             <label class="field half">
-              <span class="field-label">Promocional (R$)</span>
+              <span class="field-label">{{ isAuction ? 'Compra Imediata (R$)' : 'Promocional (R$)' }}</span>
               <input
                 v-model.number="form.preco_desconto"
                 type="number"
@@ -206,6 +266,39 @@ async function saveProduct() {
                 required
               />
             </label>
+          </div>
+
+          <div v-if="isAuction" class="row">
+            <label class="field half">
+              <span class="field-label">Lance Inicial (R$)</span>
+              <input
+                v-model.number="auctionStartPrice"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="1,00"
+                required
+              />
+            </label>
+
+            <div class="field half">
+              <span class="field-label">Duração do Leilão</span>
+              <div style="display: flex; gap: 8px">
+                <input
+                  v-model.number="auctionDurationValue"
+                  type="number"
+                  min="1"
+                  placeholder="2"
+                  style="width: 70px"
+                  required
+                />
+                <select v-model="auctionDurationUnit" style="flex: 1">
+                  <option value="minutes">Minutos</option>
+                  <option value="hours">Horas</option>
+                  <option value="days">Dias</option>
+                </select>
+              </div>
+            </div>
           </div>
 
           <label class="field">
@@ -383,5 +476,66 @@ async function saveProduct() {
   opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+.mode-toggle {
+  background: var(--mc-cream);
+  border: 1px solid var(--mc-cream-border);
+  border-radius: var(--cf-radius-sm);
+  padding: 12px 14px;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.toggle-label input {
+  display: none;
+}
+
+.slider {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background-color: #ccc;
+  border-radius: 24px;
+  transition: 0.4s;
+  flex-shrink: 0;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  border-radius: 50%;
+  transition: 0.4s;
+}
+
+input:checked + .slider {
+  background-color: #ff3b69;
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+.toggle-text {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--mc-text);
+}
+
+.mode-hint {
+  font-size: 11px;
+  color: #666;
+  margin: 8px 0 0 0;
+  line-height: 1.4;
 }
 </style>

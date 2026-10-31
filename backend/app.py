@@ -7,7 +7,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from functools import wraps
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 import random
 import string
@@ -16,6 +16,11 @@ import json
 import smtplib
 from email.message import EmailMessage
 from dotenv import load_dotenv
+
+
+def _utcnow():
+    """Retorna datetime UTC naive compatível com SQLite e Python 3.12+."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 # Força o carregamento do .env do projeto com override=True para prevalecer sobre variáveis do sistema
@@ -361,7 +366,7 @@ class Lance(db.Model):
     produto_id = db.Column(db.Integer, db.ForeignKey('produto.id'), nullable=False)
     usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
     valor = db.Column(db.Float, nullable=False)
-    data_lance = db.Column(db.DateTime, default=datetime.utcnow)
+    data_lance = db.Column(db.DateTime, default=_utcnow)
 
     produto = db.relationship('Produto', backref=db.backref('lances', lazy=True, order_by='Lance.valor.desc()'))
     usuario = db.relationship('Usuario', backref=db.backref('lances', lazy=True))
@@ -374,7 +379,7 @@ class Leilao(db.Model):
     produto_id = db.Column(db.Integer, db.ForeignKey('produto.id'), nullable=False, unique=True)
     preco_inicial = db.Column(db.Float, nullable=False)
     preco_minimo = db.Column(db.Float, nullable=False)
-    inicio = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    inicio = db.Column(db.DateTime, nullable=False, default=_utcnow)
     fim = db.Column(db.DateTime, nullable=False)
     intervalo_min = db.Column(db.Integer, nullable=False, default=15)
     ativo = db.Column(db.Boolean, nullable=False, default=True)
@@ -389,7 +394,7 @@ class Leilao(db.Model):
         return max(lances, key=lambda l: (l.valor, -l.id))
 
     def encerrado(self, agora=None):
-        return (not self.ativo) or (agora or datetime.utcnow()) >= self.fim
+        return (not self.ativo) or (agora or _utcnow()) >= self.fim
 
     def to_dict(self):
         # Encontra o maior lance ou usa o preco_inicial
@@ -406,7 +411,9 @@ class Leilao(db.Model):
                     'data': _iso_utc(l.data_lance)
                 })
 
+        is_ended = self.encerrado()
         return {
+            'active': bool(self.ativo and not is_ended),
             'startPrice': float(self.preco_inicial),
             'minPrice': float(self.preco_minimo),
             'highestBid': float(highest_bid),
@@ -414,7 +421,7 @@ class Leilao(db.Model):
             'endTime': _iso_utc(self.fim),
             'bids': bids_list,
             'winnerId': str(vencedor.usuario_id) if vencedor else None,
-            'ended': self.encerrado(),
+            'ended': is_ended,
         }
 
 
@@ -964,7 +971,7 @@ def products():
             if preco_minimo < preco_inicial:
                 return jsonify({'message': 'O preço de compra imediata deve ser maior ou igual ao lance inicial'}), 400
             
-            if leilao_fim <= datetime.utcnow():
+            if leilao_fim <= _utcnow():
                 return jsonify({'message': 'A data de fim do leilão deve estar no futuro'}), 400
 
             leilao_params = (preco_inicial, preco_minimo, leilao_fim)
@@ -991,7 +998,7 @@ def products():
 
         if leilao_params:
             preco_inicial, preco_minimo, leilao_fim = leilao_params
-            inicio = datetime.utcnow().replace(microsecond=0)
+            inicio = _utcnow().replace(microsecond=0)
             db.session.add(Leilao(
                 produto_id=produto.id,
                 preco_inicial=preco_inicial,
@@ -1138,12 +1145,11 @@ def get_recommendations():
     }), 200
 
 
-import os
-from werkzeug.utils import secure_filename
-
 @app.route('/api/products/<int:product_id>', methods=['GET', 'PUT'])
 def get_product(product_id):
-    produto = Produto.query.get_or_404(product_id)
+    produto = db.session.get(Produto, product_id)
+    if not produto:
+        return jsonify({'message': 'Produto não encontrado'}), 404
     
     if request.method == 'PUT':
         user = get_request_user()
@@ -1171,6 +1177,52 @@ def get_product(product_id):
         except (TypeError, ValueError):
             db.session.rollback()
             return jsonify({'message': 'Valores numéricos inválidos'}), 400
+
+        modo = (data.get('modo') or '').upper()
+        if modo == 'LEILAO':
+            try:
+                preco_inicial = round(float(data.get('preco_inicial', 0)), 2)
+                preco_minimo = round(float(data.get('preco_minimo', produto.preco_desconto)), 2)
+                data_fim_str = data.get('data_fim_leilao')
+                if not data_fim_str:
+                    return jsonify({'message': 'Data e hora de fim do leilão não fornecida'}), 400
+                clean_str = data_fim_str.replace('Z', '+00:00')
+                if len(clean_str) == 16:
+                    clean_str += ':00'
+                leilao_fim = datetime.fromisoformat(clean_str)
+                if leilao_fim.tzinfo:
+                    leilao_fim = leilao_fim.astimezone(timezone.utc).replace(tzinfo=None)
+            except (TypeError, ValueError):
+                db.session.rollback()
+                return jsonify({'message': 'Valores do leilão inválidos ou data mal formatada'}), 400
+
+            if preco_inicial <= 0:
+                return jsonify({'message': 'O lance inicial deve ser maior que zero'}), 400
+            if preco_minimo < preco_inicial:
+                return jsonify({'message': 'O preço de compra imediata deve ser maior ou igual ao lance inicial'}), 400
+            if leilao_fim <= _utcnow():
+                return jsonify({'message': 'A data de fim do leilão deve estar no futuro'}), 400
+
+            existing_leilao = getattr(produto, 'leilao', None)
+            if existing_leilao:
+                existing_leilao.preco_inicial = preco_inicial
+                existing_leilao.preco_minimo = preco_minimo
+                existing_leilao.fim = leilao_fim
+                existing_leilao.ativo = True
+            else:
+                db.session.add(Leilao(
+                    produto_id=produto.id,
+                    preco_inicial=preco_inicial,
+                    preco_minimo=preco_minimo,
+                    inicio=_utcnow().replace(microsecond=0),
+                    fim=leilao_fim,
+                    intervalo_min=LEILAO_INTERVALO_MIN,
+                    ativo=True,
+                ))
+        elif modo == 'FIXO':
+            existing_leilao = getattr(produto, 'leilao', None)
+            if existing_leilao:
+                existing_leilao.ativo = False
 
         # Handle image if uploaded (accept both 'image' and 'imagem')
         try:
@@ -1207,7 +1259,7 @@ def checkout():
         except (TypeError, ValueError):
             return jsonify({'message': 'Item inválido no carrinho'}), 400
 
-        produto = Produto.query.get(product_id)
+        produto = db.session.get(Produto, product_id)
         if not produto or produto.status != 'DISPONIVEL' or produto.pausado:
             return jsonify({'message': 'Um dos produtos não está mais disponível'}), 409
         if qty <= 0 or produto.quantidade < qty:
@@ -1216,7 +1268,7 @@ def checkout():
 
     code = generate_reservation_code()
 
-    now = datetime.utcnow()
+    now = _utcnow()
     total = 0.0
     total_original = 0.0
     reserved_items = []
@@ -1384,7 +1436,7 @@ def get_user_orders():
 
 @app.route('/api/products/<int:product_id>/reviews', methods=['GET'])
 def get_product_reviews(product_id):
-    produto = Produto.query.get(product_id)
+    produto = db.session.get(Produto, product_id)
     if not produto:
         return jsonify({'message': 'Produto não encontrado'}), 404
 
@@ -1502,7 +1554,7 @@ def get_merchant_reviews(_user, estab):
 @app.route('/api/merchant/reviews/<int:review_id>/reply', methods=['POST'])
 @require_merchant
 def reply_merchant_review(_user, estab, review_id):
-    rev = Avaliacao.query.get(review_id)
+    rev = db.session.get(Avaliacao, review_id)
     if not rev or rev.estabelecimento_id != estab.id:
         return jsonify({'message': 'Avaliação não encontrada'}), 404
 
@@ -1731,7 +1783,7 @@ def get_merchant_orders(_user, estab):
 @app.route('/api/merchant/orders/<int:order_id>/status', methods=['PATCH'])
 @require_merchant
 def update_order_status(_user, estab, order_id):
-    order = Pedido.query.get(order_id)
+    order = db.session.get(Pedido, order_id)
     if not order or not order.produto or order.produto.estabelecimento_id != estab.id:
         return jsonify({'message': 'Pedido não encontrado'}), 404
 
@@ -1908,7 +1960,7 @@ def add_bid(product_id):
     if not user:
         return jsonify({'message': 'Faça login para dar um lance'}), 401
 
-    produto = Produto.query.get(product_id)
+    produto = db.session.get(Produto, product_id)
     if not produto or produto.status != 'DISPONIVEL' or produto.pausado:
         return jsonify({'message': 'Produto indisponível'}), 409
 
@@ -1916,8 +1968,7 @@ def add_bid(product_id):
     if not leilao:
         return jsonify({'message': 'Produto não está em leilão'}), 409
 
-    from datetime import datetime
-    if datetime.utcnow() >= leilao.fim:
+    if _utcnow() >= leilao.fim:
         return jsonify({'message': 'Este leilão já foi encerrado.'}), 400
 
     data = request.get_json(silent=True) or {}
@@ -1978,7 +2029,7 @@ def stop_auction(_user, estab, product_id):
     if not leilao:
         return jsonify({'message': 'Este produto não está em leilão'}), 409
 
-    agora = datetime.utcnow().replace(microsecond=0)
+    agora = _utcnow().replace(microsecond=0)
     if leilao.lance_vencedor():
         if leilao.fim > agora:
             leilao.fim = agora
@@ -2011,7 +2062,7 @@ def get_favorites(user):
 @app.route('/api/favorites/<int:product_id>', methods=['POST', 'DELETE'])
 @require_auth
 def toggle_favorite(user, product_id):
-    if not Produto.query.get(product_id):
+    if not db.session.get(Produto, product_id):
         return jsonify({'message': 'Produto não encontrado'}), 404
 
     fav = Favorito.query.filter_by(usuario_id=user.id, produto_id=product_id).first()

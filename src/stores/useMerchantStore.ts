@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import type { MerchantProduct, Order } from "@/types";
 import { API_URL } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
 import { useToastStore } from "./useToastStore";
 
 export interface StoreInfo {
@@ -66,6 +66,7 @@ export const useMerchantStore = defineStore("merchant", () => {
         ? `${API_URL}/merchant/stats?period=${period}`
         : `${API_URL}/merchant/stats`;
       const res = await fetch(url, { headers: { ...authHeaders() } });
+      if (handleUnauthorized(res.status)) return;
       if (res.ok) {
         const data = await res.json();
         stats.value = {
@@ -121,6 +122,7 @@ export const useMerchantStore = defineStore("merchant", () => {
       const res = await fetch(`${API_URL}/merchant/store`, {
         headers: { ...authHeaders() },
       });
+      if (handleUnauthorized(res.status)) return;
       if (res.ok) {
         const data = await res.json();
         storeInfo.value = data;
@@ -178,6 +180,7 @@ export const useMerchantStore = defineStore("merchant", () => {
       const res = await fetch(`${API_URL}/merchant/products`, {
         headers: { ...authHeaders() },
       });
+      if (handleUnauthorized(res.status)) return;
       if (res.ok) {
         products.value = await res.json();
       }
@@ -191,6 +194,7 @@ export const useMerchantStore = defineStore("merchant", () => {
       const res = await fetch(`${API_URL}/merchant/orders`, {
         headers: { ...authHeaders() },
       });
+      if (handleUnauthorized(res.status)) return;
       if (res.ok) {
         orders.value = await res.json();
       }

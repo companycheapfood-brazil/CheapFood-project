@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import type { CartItem, Product } from "@/types";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
 import { API_URL } from "@/config/api";
 import { useToastStore } from "./useToastStore";
 import { useAuctionClock } from "@/composables/useAuctionClock";
@@ -128,6 +128,9 @@ export const useCartStore = defineStore("cart", () => {
     }
 
     const data = await res.json().catch(() => ({}));
+    if (handleUnauthorized(res.status)) {
+      throw new Error("Sessão expirada. Faça login novamente.");
+    }
     if (!res.ok) {
       throw new Error(data.message || "Não foi possível finalizar a reserva.");
     }

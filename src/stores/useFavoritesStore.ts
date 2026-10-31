@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { getLoggedUserId, authHeaders } from "@/utils/auth";
+import { getLoggedUserId, authHeaders, handleUnauthorized } from "@/utils/auth";
 import { API_URL } from "@/config/api";
 
 const FAVORITES_API = `${API_URL}/favorites`;
@@ -18,6 +18,7 @@ export const useFavoritesStore = defineStore("favorites", () => {
     }
     try {
       const res = await fetch(FAVORITES_API, { headers: authHeaders() });
+      if (handleUnauthorized(res.status)) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       favorites.value = Array.isArray(data)
@@ -43,6 +44,7 @@ export const useFavoritesStore = defineStore("favorites", () => {
         method: isFav ? "DELETE" : "POST",
         headers: authHeaders(),
       });
+      if (handleUnauthorized(res.status)) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       // Sincroniza com a lista real do servidor
