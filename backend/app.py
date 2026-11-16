@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from functools import wraps
 import os
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 import math
@@ -2218,6 +2219,31 @@ def ensure_schema():
         except Exception as e:
             db.session.rollback()
             print("Aviso ao rodar migrações leves de schema:", e, flush=True)
+
+        if DEMO_MODE:
+            try:
+                has_products = Produto.query.count() > 0
+                has_active_auctions = Leilao.query.filter(
+                    Leilao.ativo.is_(True),
+                    Leilao.fim > _utcnow()
+                ).count() > 0
+                if not has_products or not has_active_auctions:
+                    # Garante que `from app import ...` em seed_tcc reutilize este módulo quando executado via `python app.py`
+                    if __name__ == '__main__' and 'app' not in sys.modules:
+                        sys.modules['app'] = sys.modules[__name__]
+                    main_mod = sys.modules.get('__main__')
+                    running_seed_as_main = bool(
+                        main_mod and os.path.basename(getattr(main_mod, '__file__', '') or '') == 'seed_tcc.py'
+                    )
+                    seed_mod = sys.modules.get('seed_tcc')
+                    importing_seed = seed_mod is not None and not hasattr(seed_mod, 'seed_tcc')
+                    if not running_seed_as_main and not importing_seed:
+                        from seed_tcc import seed_tcc
+                        seed_tcc(run_migrations=False)
+                        print("Auto-seed de demonstração executado com sucesso.", flush=True)
+            except Exception as e:
+                db.session.rollback()
+                print("Aviso ao executar auto-seed de demonstração:", e, flush=True)
 
 
 ensure_schema()

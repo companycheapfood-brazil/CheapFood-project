@@ -3,8 +3,9 @@ from werkzeug.security import generate_password_hash
 from datetime import datetime, timedelta, timezone
 
 
-def seed_tcc():
-    ensure_schema()
+def seed_tcc(run_migrations=True):
+    if run_migrations:
+        ensure_schema()
     with app.app_context():
         now_local = datetime.now()
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: cheapfood-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: FLASK_DEBUG
+        value: "False"
+      - key: DEMO_MODE
+        value: "True"
+      - key: SECRET_KEY
+        generateValue: true
