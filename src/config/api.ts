@@ -3,8 +3,12 @@
  * Defina VITE_API_URL no arquivo .env para apontar para outro backend
  * (ex.: VITE_API_URL=https://api.cheapfood.com.br).
  */
+const DEFAULT_API_BASE = import.meta.env.PROD
+  ? "https://cheapfood-project.onrender.com"
+  : "http://127.0.0.1:5000";
+
 export const API_BASE: string = (
-  (import.meta.env.VITE_API_URL as string | undefined) || "http://127.0.0.1:5000"
+  (import.meta.env.VITE_API_URL as string | undefined) || DEFAULT_API_BASE
 ).replace(/\/+$/, "");
 
 /** Prefixo dos endpoints REST (sem barra final). */

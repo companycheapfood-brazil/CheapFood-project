@@ -81,6 +81,16 @@ def serve_upload(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, max_age=60 * 60 * 24 * 7)
 
 
+@app.route('/')
+def root_index():
+    return jsonify({'status': 'ok', 'service': 'CheapFood API', 'health': '/api/health'}), 200
+
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
+
+
 @app.route('/api/health')
 def health():
     return jsonify({'status': 'ok'}), 200
