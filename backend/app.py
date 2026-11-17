@@ -44,7 +44,7 @@ DEMO_MODE = _env_bool('DEMO_MODE', True)
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
 TOKEN_MAX_AGE = int(os.environ.get('TOKEN_MAX_AGE_HOURS', '168')) * 3600  # 7 dias
 RESET_TOKEN_MAX_AGE = 3600  # 1 hora
-ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'gif'}
+ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif', 'avif'}
 
 app = Flask(__name__, static_folder=None)
 
@@ -66,7 +66,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = _database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER') or os.path.join(basedir, 'static', 'uploads')
-app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_UPLOAD_MB', '8')) * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_UPLOAD_MB', '20')) * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 db = SQLAlchemy(app)
@@ -98,7 +98,7 @@ def health():
 
 @app.errorhandler(413)
 def too_large(_e):
-    return jsonify({'message': f"Arquivo muito grande (máx. {os.environ.get('MAX_UPLOAD_MB', '8')} MB)"}), 413
+    return jsonify({'message': f"Arquivo muito grande (máx. {os.environ.get('MAX_UPLOAD_MB', '20')} MB)"}), 413
 
 
 def save_upload(file_storage):
@@ -822,15 +822,19 @@ def analyze_image(_user, _estab):
 
     if not api_key:
         print("Aviso: GEMINI_API_KEY não encontrada, usando fallback.", flush=True)
+        fallback_data['aiProvider'] = 'fallback'
+        fallback_data['aiReason'] = 'GEMINI_API_KEY não configurada no servidor'
         return jsonify(fallback_data), 200
 
     try:
         import PIL.Image
+        import PIL.ImageOps
         import io
         import base64
         import urllib.request
 
-        img = PIL.Image.open(file.stream)
+        file.stream.seek(0)
+        img = PIL.ImageOps.exif_transpose(PIL.Image.open(file.stream))
         if img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGB")
         img.thumbnail((800, 800), PIL.Image.Resampling.LANCZOS)
@@ -862,10 +866,12 @@ def analyze_image(_user, _estab):
         }
 
         candidate_models = [
-            "gemini-3-flash-preview",
             "gemini-3.5-flash-lite",
             "gemini-3.1-flash-lite",
-            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3-flash-preview",
         ]
 
         dados = None
@@ -918,10 +924,13 @@ def analyze_image(_user, _estab):
         if not dados.get('preco_desconto'):
             dados['preco_desconto'] = fallback_data.get('preco_desconto', 6.90)
 
+        dados['aiProvider'] = 'gemini'
         return jsonify(dados), 200
 
     except Exception as e:
         print("Aviso: usando fallback inteligente de IA devido a erro:", e, flush=True)
+        fallback_data['aiProvider'] = 'fallback'
+        fallback_data['aiReason'] = str(e)
         return jsonify(fallback_data), 200
 
 

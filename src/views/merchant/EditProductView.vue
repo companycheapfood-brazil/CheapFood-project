@@ -7,6 +7,7 @@ import { useToastStore } from "@/stores/useToastStore";
 import { useMerchantStore } from "@/stores/useMerchantStore";
 import { API_URL, isImageUrl, resolveImageUrl } from "@/config/api";
 import { authHeaders, handleUnauthorized } from "@/utils/auth";
+import { normalizeImageFile } from "@/utils/image";
 
 const router = useRouter();
 const route = useRoute();
@@ -76,11 +77,12 @@ onMounted(async () => {
   }
 });
 
-function handleFile(e: Event) {
+async function handleFile(e: Event) {
   const target = e.target as HTMLInputElement;
   if (target.files && target.files[0]) {
-    file.value = target.files[0];
-    previewUrl.value = URL.createObjectURL(file.value);
+    const rawFile = target.files[0];
+    previewUrl.value = URL.createObjectURL(rawFile);
+    file.value = await normalizeImageFile(rawFile);
   }
 }
 

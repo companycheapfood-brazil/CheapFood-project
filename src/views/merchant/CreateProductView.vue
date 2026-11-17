@@ -6,7 +6,8 @@ import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { useMerchantStore } from "@/stores/useMerchantStore";
 import { useToastStore } from "@/stores/useToastStore";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
+import { normalizeImageFile } from "@/utils/image";
 import { API_URL } from "@/config/api";
 import type { MerchantProduct } from "@/types";
 
@@ -43,13 +44,14 @@ const imageFile = ref<File | null>(null);
 const previewUrl = ref<string | null>(null);
 const isAnalyzing = ref(false);
 
-function handleFileChange(event: Event) {
+async function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement;
   if (target.files && target.files.length > 0) {
-    const file = target.files[0];
-    if (file) {
-      imageFile.value = file;
-      previewUrl.value = URL.createObjectURL(file);
+    const rawFile = target.files[0];
+    if (rawFile) {
+      previewUrl.value = URL.createObjectURL(rawFile);
+      const normalized = await normalizeImageFile(rawFile);
+      imageFile.value = normalized;
     }
   }
 }
@@ -62,8 +64,11 @@ async function analyzeImage() {
 
   isAnalyzing.value = true;
   try {
+    const preparedFile = await normalizeImageFile(imageFile.value);
+    imageFile.value = preparedFile;
+
     const formData = new FormData();
-    formData.append("image", imageFile.value);
+    formData.append("image", preparedFile);
 
     const res = await fetch(
       `${API_URL}/merchant/analyze-image`,
@@ -74,7 +79,9 @@ async function analyzeImage() {
       },
     );
 
-    const data = await res.json();
+    if (handleUnauthorized(res.status)) return;
+
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || "Falha ao analisar a imagem");
 
     // Autopreenchimento inteligente completo (sempre sobrescreve ao analisar nova imagem)
@@ -92,7 +99,14 @@ async function analyzeImage() {
       promoPrice.value = Number(data.preco_desconto);
     if (!quantity.value) quantity.value = 10;
 
-    toastStore.addToast("Campos preenchidos pela Inteligência Artificial!", "success");
+    if (data.aiProvider === "fallback") {
+      toastStore.addToast(
+        "Sugestão padrão aplicada (configure GEMINI_API_KEY no Render para reconhecimento visual completo).",
+        "info",
+      );
+    } else {
+      toastStore.addToast("Campos preenchidos pela Inteligência Artificial!", "success");
+    }
   } catch (error) {
     console.error(error);
     toastStore.addToast(
@@ -164,6 +178,8 @@ async function publish() {
       },
       body: formData,
     });
+
+    if (handleUnauthorized(response.status)) return;
 
     if (response.ok) {
       const data = await response.json();
