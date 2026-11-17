@@ -2201,6 +2201,20 @@ def delete_profile(user):
         return jsonify({'message': 'Erro ao excluir conta', 'error': str(e)}), 500
 
 
+def _add_col_if_missing(tables, existing_cols, table, col_name, col_def):
+    """Adiciona coluna faltante de forma isolada e idempotente (SQLite/PostgreSQL)."""
+    if table not in tables or col_name in existing_cols.get(table, set()):
+        return
+    try:
+        db.session.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}"))
+        db.session.commit()
+        existing_cols[table].add(col_name)
+        print(f"Migração: adicionada coluna {table}.{col_name}", flush=True)
+    except Exception as e:
+        db.session.rollback()
+        print(f"Aviso ao adicionar coluna {table}.{col_name}: {e}", flush=True)
+
+
 def ensure_schema():
     """Cria tabelas e adiciona colunas faltantes em SQLite/Postgres de forma idempotente."""
     with app.app_context():
@@ -2212,38 +2226,29 @@ def ensure_schema():
         try:
             from sqlalchemy import inspect
             inspector = inspect(db.engine)
-            tables = inspector.get_table_names()
+            tables = set(inspector.get_table_names())
+            existing_cols = {t: {c['name'] for c in inspector.get_columns(t)} for t in tables}
 
-            if 'usuario' in tables:
-                existing_user_cols = [c['name'] for c in inspector.get_columns('usuario')]
-                if 'cpf' not in existing_user_cols:
-                    db.session.execute(db.text("ALTER TABLE usuario ADD COLUMN cpf VARCHAR(20)"))
-                    print("Migração: adicionada coluna usuario.cpf", flush=True)
-
-            if 'estabelecimento' in tables:
-                existing_estab_cols = [c['name'] for c in inspector.get_columns('estabelecimento')]
-                if 'usuario_id' not in existing_estab_cols:
-                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN usuario_id INTEGER"))
-                    print("Migração: adicionada coluna estabelecimento.usuario_id", flush=True)
-                if 'categoria' not in existing_estab_cols:
-                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN categoria VARCHAR(80) DEFAULT 'Padaria e Confeitaria'"))
-                    print("Migração: adicionada coluna estabelecimento.categoria", flush=True)
-                if 'horario_funcionamento' not in existing_estab_cols:
-                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN horario_funcionamento VARCHAR(150) DEFAULT 'Seg a Sáb: 08:00 às 20:00'"))
-                if 'plano' not in existing_estab_cols:
-                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN plano VARCHAR(30) DEFAULT 'free'"))
-                if 'formas_pagamento' not in existing_estab_cols:
-                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN formas_pagamento VARCHAR(200) DEFAULT 'PIX, Cartão de Crédito/Débito e Dinheiro'"))
-                if 'notificacoes_ativas' not in existing_estab_cols:
-                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN notificacoes_ativas BOOLEAN DEFAULT TRUE"))
-
-            if 'pedido' in tables:
-                existing_pedido_cols = [c['name'] for c in inspector.get_columns('pedido')]
-                if 'preco_unitario' not in existing_pedido_cols:
-                    db.session.execute(db.text("ALTER TABLE pedido ADD COLUMN preco_unitario DOUBLE PRECISION"))
-                    print("Migração: adicionada coluna pedido.preco_unitario", flush=True)
-
-            db.session.commit()
+            migrations = [
+                ('usuario', 'foto', 'VARCHAR(500)'),
+                ('usuario', 'cpf', 'VARCHAR(20)'),
+                ('usuario', 'telefone', 'VARCHAR(20)'),
+                ('usuario', 'criado_em', 'TIMESTAMP'),
+                ('estabelecimento', 'usuario_id', 'INTEGER'),
+                ('estabelecimento', 'categoria', "VARCHAR(80) DEFAULT 'Padaria e Confeitaria'"),
+                ('estabelecimento', 'horario_funcionamento', "VARCHAR(150) DEFAULT 'Seg a Sáb: 08:00 às 20:00'"),
+                ('estabelecimento', 'plano', "VARCHAR(30) DEFAULT 'free'"),
+                ('estabelecimento', 'formas_pagamento', "VARCHAR(200) DEFAULT 'PIX, Cartão de Crédito/Débito e Dinheiro'"),
+                ('estabelecimento', 'notificacoes_ativas', 'BOOLEAN DEFAULT TRUE'),
+                ('produto', 'pausado', 'BOOLEAN DEFAULT FALSE'),
+                ('produto', 'descricao', 'TEXT'),
+                ('produto', 'categoria', 'VARCHAR(80)'),
+                ('produto', 'imagem', 'VARCHAR(500)'),
+                ('produto', 'status', "VARCHAR(20) DEFAULT 'DISPONIVEL'"),
+                ('pedido', 'preco_unitario', 'DOUBLE PRECISION'),
+            ]
+            for table, col_name, col_def in migrations:
+                _add_col_if_missing(tables, existing_cols, table, col_name, col_def)
 
             # Vincula estabelecimentos órfãos ao primeiro usuário comerciante (ADMIN)
             admin_user = Usuario.query.filter_by(tipo='ADMIN').first()
@@ -2261,7 +2266,8 @@ def ensure_schema():
         if DEMO_MODE:
             try:
                 has_products = Produto.query.count() > 0
-                if not has_products:
+                has_any_auctions = Leilao.query.count() > 0
+                if not has_products or not has_any_auctions:
                     # Garante que `from app import ...` em seed_tcc reutilize este módulo quando executado via `python app.py`
                     if __name__ == '__main__' and 'app' not in sys.modules:
                         sys.modules['app'] = sys.modules[__name__]
@@ -2279,7 +2285,7 @@ def ensure_schema():
                         seed_tcc(run_migrations=False)
                         print("Auto-seed de demonstração executado com sucesso.", flush=True)
                 else:
-                    # Apenas renova o prazo dos leilões se expiraram sem apagar produtos/pedidos reais
+                    # Já existem produtos e leilões do TCC: apenas renova o prazo se expiraram, sem apagar dados reais
                     has_active_auctions = Leilao.query.filter(
                         Leilao.ativo.is_(True),
                         Leilao.fim > _utcnow()
