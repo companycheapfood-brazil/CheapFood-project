@@ -55,8 +55,12 @@ if not SECRET_KEY:
     SECRET_KEY = 'dev-secret-key-change-me'
 app.config['SECRET_KEY'] = SECRET_KEY
 
-_cors_origins = [o.strip() for o in os.environ.get('CORS_ORIGINS', '*').split(',') if o.strip()]
-CORS(app, resources={r"/api/*": {"origins": _cors_origins if _cors_origins != ['*'] else '*'}})
+_cors_origins = [o.strip().rstrip('/') for o in os.environ.get('CORS_ORIGINS', '*').split(',') if o.strip()]
+_cors_val = _cors_origins if _cors_origins != ['*'] else '*'
+CORS(app, resources={
+    r"/api/*": {"origins": _cors_val},
+    r"/static/*": {"origins": _cors_val},
+})
 
 _database_url = os.environ.get('DATABASE_URL') or ('sqlite:///' + os.path.join(basedir, '..', 'cheapfood.db'))
 if _database_url.startswith('postgres://'):
@@ -157,7 +161,7 @@ class Estabelecimento(db.Model):
             'id': self.id,
             'name': self.nome,
             'category': self.categoria or 'Padaria e Confeitaria',
-            'cnpj': self.cnpj or '12.345.678/0001-90',
+            'cnpj': self.cnpj if self.cnpj is not None else ('12.345.678/0001-90' if self.id == 1 else ''),
             'email': self.email,
             'phone': self.telefone or '(14) 99999-0000',
             'address': self.endereco,
@@ -1598,14 +1602,26 @@ def reply_merchant_review(_user, estab, review_id):
 def merchant_store(_user, estab):
     if request.method == 'PUT':
         data = request.get_json(silent=True) or {}
+        if 'cnpj' in data:
+            new_cnpj = (data['cnpj'] or '').strip() or None
+            if new_cnpj and Estabelecimento.query.filter(
+                Estabelecimento.cnpj == new_cnpj,
+                Estabelecimento.id != estab.id
+            ).first():
+                return jsonify({'message': 'Este CNPJ já está cadastrado em outra loja'}), 409
+            estab.cnpj = new_cnpj
+        if 'email' in data and data['email']:
+            new_email = data['email'].strip()
+            if Estabelecimento.query.filter(
+                db.func.lower(Estabelecimento.email) == new_email.lower(),
+                Estabelecimento.id != estab.id
+            ).first():
+                return jsonify({'message': 'Este e-mail comercial já está em uso por outra loja'}), 409
+            estab.email = new_email
         if 'name' in data and data['name']:
             estab.nome = data['name'].strip()
         if 'category' in data and data['category']:
             estab.categoria = data['category'].strip()
-        if 'cnpj' in data:
-            estab.cnpj = data['cnpj'].strip()
-        if 'email' in data and data['email']:
-            estab.email = data['email'].strip()
         if 'phone' in data:
             estab.telefone = data['phone'].strip()
         if 'address' in data and data['address']:
@@ -1891,7 +1907,10 @@ def reset_demo_data(_user, _estab):
     if not DEMO_MODE:
         return jsonify({'message': 'Restauração de demonstração desabilitada em produção'}), 403
     try:
-        from seed_tcc import seed_tcc
+        try:
+            from seed_tcc import seed_tcc
+        except ModuleNotFoundError:
+            from backend.seed_tcc import seed_tcc
         seed_tcc()
         return jsonify({'message': 'Cenário de apresentação restaurado com sucesso!'}), 200
     except Exception as e:
@@ -2216,12 +2235,12 @@ def ensure_schema():
                 if 'formas_pagamento' not in existing_estab_cols:
                     db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN formas_pagamento VARCHAR(200) DEFAULT 'PIX, Cartão de Crédito/Débito e Dinheiro'"))
                 if 'notificacoes_ativas' not in existing_estab_cols:
-                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN notificacoes_ativas BOOLEAN DEFAULT 1"))
+                    db.session.execute(db.text("ALTER TABLE estabelecimento ADD COLUMN notificacoes_ativas BOOLEAN DEFAULT TRUE"))
 
             if 'pedido' in tables:
                 existing_pedido_cols = [c['name'] for c in inspector.get_columns('pedido')]
                 if 'preco_unitario' not in existing_pedido_cols:
-                    db.session.execute(db.text("ALTER TABLE pedido ADD COLUMN preco_unitario REAL"))
+                    db.session.execute(db.text("ALTER TABLE pedido ADD COLUMN preco_unitario DOUBLE PRECISION"))
                     print("Migração: adicionada coluna pedido.preco_unitario", flush=True)
 
             db.session.commit()
@@ -2242,11 +2261,7 @@ def ensure_schema():
         if DEMO_MODE:
             try:
                 has_products = Produto.query.count() > 0
-                has_active_auctions = Leilao.query.filter(
-                    Leilao.ativo.is_(True),
-                    Leilao.fim > _utcnow()
-                ).count() > 0
-                if not has_products or not has_active_auctions:
+                if not has_products:
                     # Garante que `from app import ...` em seed_tcc reutilize este módulo quando executado via `python app.py`
                     if __name__ == '__main__' and 'app' not in sys.modules:
                         sys.modules['app'] = sys.modules[__name__]
@@ -2257,9 +2272,31 @@ def ensure_schema():
                     seed_mod = sys.modules.get('seed_tcc')
                     importing_seed = seed_mod is not None and not hasattr(seed_mod, 'seed_tcc')
                     if not running_seed_as_main and not importing_seed:
-                        from seed_tcc import seed_tcc
+                        try:
+                            from seed_tcc import seed_tcc
+                        except ModuleNotFoundError:
+                            from backend.seed_tcc import seed_tcc
                         seed_tcc(run_migrations=False)
                         print("Auto-seed de demonstração executado com sucesso.", flush=True)
+                else:
+                    # Apenas renova o prazo dos leilões se expiraram sem apagar produtos/pedidos reais
+                    has_active_auctions = Leilao.query.filter(
+                        Leilao.ativo.is_(True),
+                        Leilao.fim > _utcnow()
+                    ).count() > 0
+                    if not has_active_auctions:
+                        expired_or_inactive = Leilao.query.join(Produto, Leilao.produto_id == Produto.id).filter(
+                            Produto.status == 'DISPONIVEL',
+                            Produto.pausado.isnot(True),
+                            Produto.quantidade > 0,
+                        ).all()
+                        if expired_or_inactive:
+                            new_end = _utcnow() + timedelta(hours=4)
+                            for leilao in expired_or_inactive:
+                                if not leilao.ativo or leilao.fim <= _utcnow():
+                                    leilao.ativo = True
+                                    leilao.fim = new_end
+                            db.session.commit()
             except Exception as e:
                 db.session.rollback()
                 print("Aviso ao executar auto-seed de demonstração:", e, flush=True)

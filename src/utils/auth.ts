@@ -47,7 +47,7 @@ export function handleUnauthorized(status: number): boolean {
     localStorage.removeItem("user");
     localStorage.removeItem("cf_token");
     localStorage.removeItem("cf_cart_items");
-    const publicPaths = ["/login", "/register", "/recuperar-senha"];
+    const publicPaths = ["/start", "/login", "/register", "/forgot-password", "/reset-password"];
     if (
       typeof window !== "undefined" &&
       !publicPaths.includes(window.location.pathname)

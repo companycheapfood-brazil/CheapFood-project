@@ -5,8 +5,5 @@ Werkzeug>=3.0.3
 itsdangerous==2.2.0
 gunicorn==22.0.0
 Pillow>=10.0.0
-google-generativeai
-google-api-core==2.33.0
-grpcio-status==1.71.2
 python-dotenv
 psycopg2-binary>=2.9.9; platform_system != "Windows"

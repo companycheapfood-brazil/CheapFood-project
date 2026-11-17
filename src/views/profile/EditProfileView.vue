@@ -5,7 +5,8 @@ import BottomNav from "@/components/BottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { useToastStore } from "@/stores/useToastStore";
 import { API_URL, resolveImageUrl } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
+import { normalizeImageFile } from "@/utils/image";
 import axios from "axios";
 
 const router = useRouter();
@@ -40,12 +41,12 @@ function triggerFileInput() {
   fileInput.value?.click();
 }
 
-function handleFileChange(event: Event) {
+async function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  const file = target.files?.[0];
-  if (file) {
-    selectedFile.value = file;
-    fotoUrl.value = URL.createObjectURL(file);
+  const rawFile = target.files?.[0];
+  if (rawFile) {
+    fotoUrl.value = URL.createObjectURL(rawFile);
+    selectedFile.value = await normalizeImageFile(rawFile);
   }
 }
 
@@ -73,7 +74,10 @@ async function saveProfile() {
     }
 
     toast.addToast("Perfil atualizado com sucesso!");
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.response?.status && handleUnauthorized(error.response.status)) {
+      return;
+    }
     console.error("Erro ao salvar perfil:", error);
     toast.addToast("Erro ao atualizar perfil.", "error");
   } finally {
