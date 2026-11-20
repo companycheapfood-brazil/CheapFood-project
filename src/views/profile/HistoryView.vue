@@ -4,7 +4,8 @@ import { useRouter } from "vue-router";
 import BottomNav from "@/components/BottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { API_URL } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
+import { formatBRL } from "@/composables/useAuctionClock";
 import { useToastStore } from "@/stores/useToastStore";
 
 const router = useRouter();
@@ -36,6 +37,7 @@ interface OrderHistoryItem {
 
 const orders = ref<OrderHistoryItem[]>([]);
 const isLoading = ref(true);
+const loadError = ref("");
 const activeTab = ref<"todos" | "pendentes" | "retirados" | "expirados">("todos");
 
 // Modal de avaliação do pedido
@@ -96,13 +98,14 @@ async function submitOrderReview() {
         tags: ratingTags.value,
       }),
     });
-    const data = await res.json();
+    if (handleUnauthorized(res.status)) return;
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.message || "Erro ao enviar avaliação");
     }
     ratingModalOrder.value.review = data.review;
     ratingModalOrder.value = null;
-    toastStore.addToast("Avaliação do pedido salva com sucesso! ⭐", "success");
+    toastStore.addToast("Avaliação do pedido salva com sucesso!", "success");
   } catch (err: any) {
     toastStore.addToast(err.message || "Erro ao salvar avaliação", "error");
   } finally {
@@ -110,20 +113,28 @@ async function submitOrderReview() {
   }
 }
 
-onMounted(async () => {
+async function loadOrders() {
+  isLoading.value = true;
+  loadError.value = "";
   try {
     const res = await fetch(`${API_URL}/orders`, {
       headers: authHeaders(),
     });
-    if (res.ok) {
-      orders.value = await res.json();
+    if (handleUnauthorized(res.status)) return;
+    if (!res.ok) {
+      throw new Error("Não foi possível carregar seu histórico de pedidos.");
     }
-  } catch (e) {
+    const data = await res.json().catch(() => []);
+    orders.value = Array.isArray(data) ? data : [];
+  } catch (e: any) {
     console.error("Erro ao carregar histórico:", e);
+    loadError.value = e?.message || "Erro de conexão ao carregar pedidos.";
   } finally {
     isLoading.value = false;
   }
-});
+}
+
+onMounted(loadOrders);
 
 const filteredOrders = computed(() => {
   if (activeTab.value === "todos") return orders.value;
@@ -136,10 +147,6 @@ function formatStatus(status: string) {
   if (status === "retirado") return "Retirado";
   if (status === "expirado") return "Expirado";
   return "Pendente";
-}
-
-function formatBRL(v: number) {
-  return `R$ ${v.toFixed(2).replace(".", ",")}`;
 }
 
 function openReceipt(order: OrderHistoryItem) {
@@ -194,6 +201,13 @@ function openReceipt(order: OrderHistoryItem) {
 
       <div v-if="isLoading" class="empty-state">
         <p>Carregando seus pedidos...</p>
+      </div>
+
+      <div v-else-if="loadError" class="empty-state">
+        <p style="margin-bottom: 12px">{{ loadError }}</p>
+        <button type="button" class="filter-btn active" @click="loadOrders">
+          Tentar novamente
+        </button>
       </div>
 
       <div v-else-if="filteredOrders.length === 0" class="empty-state">
@@ -604,7 +618,7 @@ function openReceipt(order: OrderHistoryItem) {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2000;
   padding: 16px;
 }
 

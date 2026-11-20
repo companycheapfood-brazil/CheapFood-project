@@ -50,8 +50,11 @@ const tabs = [
       :class="{
         active:
           route.name === tab.name ||
+          (tab.name === 'merchant-products' && route.name === 'merchant-edit') ||
           (tab.name === 'merchant-orders' &&
-            route.name === 'merchant-order-detail'),
+            (route.name === 'merchant-order-detail' ||
+              route.name === 'merchant-history')) ||
+          (tab.name === 'merchant-settings' && route.name === 'merchant-plans'),
       }"
     >
       <span class="nav-icon" v-html="tab.svg"></span>

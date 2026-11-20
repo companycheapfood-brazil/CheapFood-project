@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "@/components/BottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { useToastStore } from "@/stores/useToastStore";
 import { API_URL, resolveImageUrl } from "@/config/api";
-import { authHeaders, handleUnauthorized } from "@/utils/auth";
+import { authHeaders, bumpSessionVersion, handleUnauthorized } from "@/utils/auth";
 import { normalizeImageFile } from "@/utils/image";
 import axios from "axios";
 
@@ -15,25 +15,60 @@ const toast = useToastStore();
 const name = ref("");
 const email = ref("");
 const phone = ref("");
-const cpf = ref("412.890.348-10");
+const cpf = ref("");
 const fotoUrl = ref("");
+const avatarError = ref(false);
 const selectedFile = ref<File | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const isSaving = ref(false);
+const isProcessingImage = ref(false);
+let activeBlobUrl: string | null = null;
 
-onMounted(() => {
+function revokeActiveBlob() {
+  if (activeBlobUrl) {
+    URL.revokeObjectURL(activeBlobUrl);
+    activeBlobUrl = null;
+  }
+}
+
+onUnmounted(() => {
+  revokeActiveBlob();
+});
+
+function populateFromUser(u: any) {
+  if (!u) return;
+  name.value = u.name || "";
+  email.value = u.email || "";
+  phone.value = u.telefone || "";
+  cpf.value = u.cpf || "";
+  avatarError.value = false;
+  if (u.foto && !selectedFile.value) {
+    fotoUrl.value = resolveImageUrl(u.foto);
+  }
+}
+
+onMounted(async () => {
   const userData = localStorage.getItem("user");
   if (userData) {
-    const parsed = JSON.parse(userData);
-    if (parsed.user) {
-      name.value = parsed.user.name || "";
-      email.value = parsed.user.email || "";
-      phone.value = parsed.user.telefone || "(14) 99712-3456";
-      cpf.value = parsed.user.cpf || "412.890.348-10";
-      if (parsed.user.foto) {
-        fotoUrl.value = resolveImageUrl(parsed.user.foto);
+    try {
+      const parsed = JSON.parse(userData);
+      populateFromUser(parsed?.user || parsed);
+    } catch {
+      // ignore corrupted storage
+    }
+  }
+
+  try {
+    const res = await fetch(`${API_URL}/auth/me`, { headers: authHeaders() });
+    if (handleUnauthorized(res.status)) return;
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data?.user) {
+        populateFromUser(data.user);
       }
     }
+  } catch {
+    // mantém valores do cache local
   }
 });
 
@@ -44,42 +79,69 @@ function triggerFileInput() {
 async function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement;
   const rawFile = target.files?.[0];
-  if (rawFile) {
-    fotoUrl.value = URL.createObjectURL(rawFile);
+  if (!rawFile) return;
+
+  isProcessingImage.value = true;
+  try {
+    revokeActiveBlob();
+    activeBlobUrl = URL.createObjectURL(rawFile);
+    fotoUrl.value = activeBlobUrl;
+    avatarError.value = false;
     selectedFile.value = await normalizeImageFile(rawFile);
+  } catch {
+    toast.addToast("Não foi possível processar esta imagem.", "error");
+  } finally {
+    isProcessingImage.value = false;
+    target.value = "";
   }
 }
 
 async function saveProfile() {
+  if (isSaving.value || isProcessingImage.value) return;
+  if (!name.value.trim()) {
+    toast.addToast("Informe seu nome completo.", "error");
+    return;
+  }
+
   isSaving.value = true;
   try {
     const formData = new FormData();
-    formData.append("email", email.value);
-    formData.append("name", name.value);
-    formData.append("telefone", phone.value);
-    formData.append("cpf", cpf.value);
+    formData.append("name", name.value.trim());
+    formData.append("telefone", phone.value.trim());
+    formData.append("cpf", cpf.value.trim());
     if (selectedFile.value) {
       formData.append("foto", selectedFile.value);
     }
 
     const res = await axios.put(`${API_URL}/profile`, formData, {
-      headers: { "Content-Type": "multipart/form-data", ...authHeaders() },
+      headers: { ...authHeaders() },
     });
 
-    const userData = localStorage.getItem("user");
-    if (userData) {
-      const parsed = JSON.parse(userData);
-      parsed.user = res.data.user;
-      localStorage.setItem("user", JSON.stringify(parsed));
+    if (res.data?.user) {
+      try {
+        const userData = localStorage.getItem("user");
+        if (userData) {
+          const parsed = JSON.parse(userData);
+          parsed.user = res.data.user;
+          localStorage.setItem("user", JSON.stringify(parsed));
+        }
+      } catch {}
+      selectedFile.value = null;
+      revokeActiveBlob();
+      populateFromUser(res.data.user);
+      bumpSessionVersion();
     }
 
-    toast.addToast("Perfil atualizado com sucesso!");
+    toast.addToast("Perfil atualizado com sucesso!", "success");
   } catch (error: any) {
     if (error?.response?.status && handleUnauthorized(error.response.status)) {
       return;
     }
     console.error("Erro ao salvar perfil:", error);
-    toast.addToast("Erro ao atualizar perfil.", "error");
+    toast.addToast(
+      error?.response?.data?.message || "Erro ao atualizar perfil.",
+      "error",
+    );
   } finally {
     isSaving.value = false;
   }
@@ -99,12 +161,24 @@ async function saveProfile() {
     <main class="content">
       <div class="avatar-section">
         <div class="avatar-circle" @click="triggerFileInput" style="cursor: pointer; overflow: hidden; color: #8c5b16;">
-          <img v-if="fotoUrl" :src="fotoUrl" style="width: 100%; height: 100%; object-fit: cover;" />
+          <img
+            v-if="fotoUrl && !avatarError"
+            :src="fotoUrl"
+            alt="Foto de perfil"
+            style="width: 100%; height: 100%; object-fit: cover;"
+            @error="avatarError = true"
+          />
           <SvgIcon v-else name="user" :size="32" />
         </div>
-        <button class="change-photo-btn" @click="triggerFileInput" style="display: inline-flex; align-items: center; gap: 5px;">
+        <button
+          type="button"
+          class="change-photo-btn"
+          :disabled="isProcessingImage"
+          @click="triggerFileInput"
+          style="display: inline-flex; align-items: center; gap: 5px;"
+        >
           <SvgIcon name="camera" :size="14" />
-          <span>Alterar foto</span>
+          <span>{{ isProcessingImage ? "Processando foto..." : "Alterar foto" }}</span>
         </button>
         <input type="file" ref="fileInput" @change="handleFileChange" accept="image/*" style="display: none" />
       </div>
@@ -112,7 +186,7 @@ async function saveProfile() {
       <form class="edit-form" @submit.prevent="saveProfile">
         <div class="form-group">
           <label>Nome completo</label>
-          <input type="text" v-model="name" required />
+          <input type="text" v-model="name" maxlength="100" required />
         </div>
         <div class="form-group">
           <label>E-mail</label>
@@ -120,15 +194,15 @@ async function saveProfile() {
         </div>
         <div class="form-group">
           <label>Telefone</label>
-          <input type="text" v-model="phone" />
+          <input type="text" v-model="phone" maxlength="20" placeholder="(00) 00000-0000" />
         </div>
         <div class="form-group">
           <label>CPF</label>
-          <input type="text" v-model="cpf" />
+          <input type="text" v-model="cpf" maxlength="20" placeholder="000.000.000-00" />
         </div>
 
-        <button class="save-btn" :disabled="isSaving">
-          {{ isSaving ? 'Salvando...' : 'Salvar alterações' }}
+        <button type="submit" class="save-btn" :disabled="isSaving || isProcessingImage">
+          {{ isSaving ? "Salvando..." : isProcessingImage ? "Preparando imagem..." : "Salvar alterações" }}
         </button>
       </form>
     </main>

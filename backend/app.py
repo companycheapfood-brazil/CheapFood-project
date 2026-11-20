@@ -1,14 +1,18 @@
 from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from functools import wraps
 import os
+import re
 import sys
+import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import math
 import random
 import string
@@ -18,14 +22,84 @@ import smtplib
 from email.message import EmailMessage
 from dotenv import load_dotenv
 
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
+
+BRT = timezone(timedelta(hours=-3))
+
 
 def _utcnow():
     """Retorna datetime UTC naive compatível com SQLite e Python 3.12+."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+
+def _now_brt():
+    """Retorna datetime atual no fuso de Brasília (UTC-3, naive) para métricas, validade e pedidos."""
+    return datetime.now(BRT).replace(tzinfo=None)
+
+
+def _env_int(name, default):
+    raw = (os.environ.get(name) or '').strip()
+    try:
+        return int(raw) if raw else int(default)
+    except ValueError:
+        return int(default)
+
+
+def _json_dict():
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _clean_str(value, max_len=None, default=''):
+    if value is None:
+        return default
+    text = str(value).strip()
+    if max_len is not None:
+        text = text[:max_len]
+    return text
+
+
+def _parse_float(value):
+    if value is None or isinstance(value, bool):
+        raise ValueError('Valor numérico ausente')
+    if isinstance(value, str):
+        cleaned = re.sub(r'[R$\s]', '', value).strip()
+        if ',' in cleaned and '.' in cleaned:
+            cleaned = cleaned.replace('.', '').replace(',', '.')
+        elif ',' in cleaned:
+            cleaned = cleaned.replace(',', '.')
+        val = float(cleaned)
+    else:
+        val = float(value)
+    if not math.isfinite(val):
+        raise ValueError('Valor numérico não finito')
+    return val
+
+
+def _parse_validity_date(val):
+    """Aceita datetime.date, datetime.datetime ou string 'YYYY-MM-DD' / 'DD/MM/YYYY'."""
+    if isinstance(val, datetime):
+        d = val.date()
+        return d, d.strftime('%Y-%m-%d')
+    if isinstance(val, date):
+        return val, val.strftime('%Y-%m-%d')
+    s = str(val or '').strip()
+    for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%Y/%m/%d'):
+        try:
+            d = datetime.strptime(s[:10], fmt).date()
+            return d, d.strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    return None, s
+
+
 basedir = os.path.abspath(os.path.dirname(__file__))
-# Força o carregamento do .env do projeto com override=True para prevalecer sobre variáveis do sistema
-load_dotenv(os.path.join(basedir, '.env'), override=True)
+# Carrega .env local sem sobrescrever variáveis já definidas no ambiente da nuvem (Altvia/Render/Railway)
+load_dotenv(os.path.join(basedir, '.env'), override=False)
 
 
 def _env_bool(name, default=False):
@@ -41,10 +115,11 @@ DEBUG = _env_bool('FLASK_DEBUG', False)
 # Modo demonstração: libera "Restaurar cenário" e mostra o link de redefinição de senha
 # na própria tela quando não há SMTP configurado. Desligue em produção real.
 DEMO_MODE = _env_bool('DEMO_MODE', True)
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
-TOKEN_MAX_AGE = int(os.environ.get('TOKEN_MAX_AGE_HOURS', '168')) * 3600  # 7 dias
+FRONTEND_URL = (os.environ.get('FRONTEND_URL') or '').strip().rstrip('/')
+TOKEN_MAX_AGE = _env_int('TOKEN_MAX_AGE_HOURS', 168) * 3600  # 7 dias
 RESET_TOKEN_MAX_AGE = 3600  # 1 hora
 ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif', 'avif'}
+MAX_UPLOAD_MB = _env_int('MAX_UPLOAD_MB', 20)
 
 app = Flask(__name__, static_folder=None)
 
@@ -62,15 +137,24 @@ CORS(app, resources={
     r"/static/*": {"origins": _cors_val},
 })
 
-_database_url = os.environ.get('DATABASE_URL') or ('sqlite:///' + os.path.join(basedir, '..', 'cheapfood.db'))
+_database_url = (os.environ.get('DATABASE_URL') or '').strip()
+if not _database_url:
+    _parent_db = os.path.abspath(os.path.join(basedir, '..', 'cheapfood.db'))
+    if os.path.exists(_parent_db) or os.access(os.path.dirname(_parent_db), os.W_OK):
+        _database_url = 'sqlite:///' + _parent_db
+    else:
+        _database_url = 'sqlite:///' + os.path.join(basedir, 'cheapfood.db')
 if _database_url.startswith('postgres://'):
     # Render/Heroku entregam "postgres://", mas o SQLAlchemy 2 exige "postgresql://"
     _database_url = _database_url.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = _database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
+_engine_options = {'pool_pre_ping': True}
+if _database_url.startswith('sqlite:'):
+    _engine_options['connect_args'] = {'timeout': 15}
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _engine_options
 app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER') or os.path.join(basedir, 'static', 'uploads')
-app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_UPLOAD_MB', '20')) * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 db = SQLAlchemy(app)
@@ -79,10 +163,32 @@ token_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='cheapf
 reset_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='cheapfood-password-reset')
 
 
+def _configure_sqlite_pragmas():
+    if not _database_url.startswith('sqlite:'):
+        return
+    with app.app_context():
+        @event.listens_for(db.engine, 'connect')
+        def _set_sqlite_pragma(dbapi_connection, _connection_record):
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute('PRAGMA journal_mode=WAL')
+                cursor.execute('PRAGMA busy_timeout=10000')
+                cursor.close()
+            except Exception:
+                pass
+
+
+_configure_sqlite_pragmas()
+
+
 @app.route('/static/uploads/<path:filename>')
 def serve_upload(filename):
-    """Serve as imagens enviadas (pasta configurável via UPLOAD_FOLDER)."""
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename, max_age=60 * 60 * 24 * 7)
+    """Serve as imagens enviadas (pasta configurável via UPLOAD_FOLDER, com fallback para assets embutidos)."""
+    primary = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    if os.path.isfile(primary):
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename, max_age=60 * 60 * 24 * 7)
+    bundled_dir = os.path.join(basedir, 'static', 'uploads')
+    return send_from_directory(bundled_dir, filename, max_age=60 * 60 * 24 * 7)
 
 
 @app.route('/')
@@ -97,23 +203,48 @@ def favicon():
 
 @app.route('/api/health')
 def health():
-    return jsonify({'status': 'ok'}), 200
+    return jsonify({'status': 'ok', 'demoMode': DEMO_MODE}), 200
 
 
 @app.errorhandler(413)
 def too_large(_e):
-    return jsonify({'message': f"Arquivo muito grande (máx. {os.environ.get('MAX_UPLOAD_MB', '20')} MB)"}), 413
+    return jsonify({'message': f"Arquivo muito grande (máx. {MAX_UPLOAD_MB} MB)"}), 413
+
+
+@app.errorhandler(500)
+def internal_error(err):
+    db.session.rollback()
+    print("Erro interno 500:", err, flush=True)
+    return jsonify({'message': 'Erro interno no servidor. Tente novamente em instantes.'}), 500
 
 
 def save_upload(file_storage):
-    """Valida a extensão, salva o arquivo em UPLOAD_FOLDER e retorna o caminho relativo público."""
+    """Valida a extensão, converte formatos não-web (ex.: HEIC) para JPEG e salva em UPLOAD_FOLDER."""
     if not file_storage or not file_storage.filename:
         return None
-    filename = secure_filename(file_storage.filename) or 'imagem.jpg'
-    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    raw_name = os.path.basename(file_storage.filename)
+    stem, raw_ext = os.path.splitext(raw_name)
+    ext = raw_ext.lstrip('.').lower()
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
         raise ValueError('Formato de imagem não suportado (use PNG, JPG, WEBP ou GIF)')
-    unique_filename = f"{uuid.uuid4().hex}_{filename}"
+    safe_stem = secure_filename(stem)[:80] or 'imagem'
+
+    if ext in ('heic', 'heif'):
+        try:
+            import PIL.Image
+            import PIL.ImageOps
+            file_storage.stream.seek(0)
+            img = PIL.ImageOps.exif_transpose(PIL.Image.open(file_storage.stream))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.thumbnail((1280, 1280), PIL.Image.Resampling.LANCZOS)
+            unique_filename = f"{uuid.uuid4().hex}_{safe_stem}.jpg"
+            img.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename), format='JPEG', quality=88)
+            return f"/static/uploads/{unique_filename}"
+        except Exception:
+            pass
+
+    unique_filename = f"{uuid.uuid4().hex}_{safe_stem}.{ext}"
     file_storage.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
     return f"/static/uploads/{unique_filename}"
 
@@ -132,7 +263,7 @@ class Usuario(db.Model):
     cpf = db.Column(db.String(20))
     foto = db.Column(db.String(500))
     tipo = db.Column(db.String(20), nullable=False, default='CLIENTE')
-    criado_em = db.Column(db.DateTime, default=datetime.now)
+    criado_em = db.Column(db.DateTime, default=_now_brt)
 
 class Estabelecimento(db.Model):
     __tablename__ = 'estabelecimento'
@@ -149,7 +280,7 @@ class Estabelecimento(db.Model):
     longitude = db.Column(db.Float)
     horario_funcionamento = db.Column(db.String(150), default='Seg a Sáb: 08:00 às 20:00')
     plano = db.Column(db.String(30), default='free')
-    formas_pagamento = db.Column(db.String(200), default='PIX, Cartão de Crédito/Débito e Dinheiro')
+    formas_pagamento = db.Column(db.String(200), default='PIX, Cartão de Crédito, Cartão de Débito, Dinheiro')
     notificacoes_ativas = db.Column(db.Boolean, default=True)
     usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=True, index=True)
     categoria = db.Column(db.String(80), default='Padaria e Confeitaria')
@@ -170,7 +301,7 @@ class Estabelecimento(db.Model):
             'cep': self.cep or '17500-000',
             'openingHours': self.horario_funcionamento or 'Seg a Sáb: 08:00 às 20:00',
             'plan': self.plano or 'free',
-            'paymentMethods': self.formas_pagamento or 'PIX, Cartão de Crédito/Débito e Dinheiro',
+            'paymentMethods': self.formas_pagamento or 'PIX, Cartão de Crédito, Cartão de Débito, Dinheiro',
             'notificationsEnabled': True if self.notificacoes_ativas is None else bool(self.notificacoes_ativas)
         }
 
@@ -191,11 +322,11 @@ class Produto(db.Model):
     
     estabelecimento = db.relationship('Estabelecimento', backref=db.backref('produtos', lazy=True))
 
-    def to_dict(self):
-        # Calculate days until expiration
-        try:
-            validity_date = datetime.strptime(self.data_validade, '%Y-%m-%d').date()
-            diff = (validity_date - datetime.now().date()).days
+    def to_dict(self, store_reviews_map=None):
+        # Calculate days until expiration (aceita str 'YYYY-MM-DD' ou datetime.date do PostgreSQL)
+        validity_date, validity_str = _parse_validity_date(self.data_validade)
+        if validity_date is not None:
+            diff = (validity_date - _now_brt().date()).days
             if diff < 0:
                 expires_in = "Vencido"
             elif diff == 0:
@@ -204,8 +335,8 @@ class Produto(db.Model):
                 expires_in = "Vence amanhã!"
             else:
                 expires_in = f"Vence em {diff} dias"
-        except:
-            expires_in = self.data_validade
+        else:
+            expires_in = validity_str or ''
 
         # Mapeamento de SVGs profissionais caso a imagem seja NULL
         svg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/></svg>'
@@ -219,26 +350,30 @@ class Produto(db.Model):
             elif "frios" in cat: svg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10.1 2.182a2 2 0 0 1 3.8 0l1.341 4.124a2 2 0 0 0 1.82 1.322h4.32a2 2 0 0 1 1.177 3.62l-3.496 2.54a2 2 0 0 0-.714 2.196l1.34 4.124a2 2 0 0 1-3.076 2.235l-3.496-2.54a2 2 0 0 0-2.352 0l-3.496 2.54a2 2 0 0 1-3.076-2.235l1.34-4.124a2 2 0 0 0-.714-2.196l-3.496-2.54a2 2 0 0 1 1.176-3.62h4.32a2 2 0 0 0 1.82-1.322L10.1 2.182Z"/></svg>'
             elif "congel" in cat: svg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M4 14l8-8 8 8"/><path d="M22 12H2"/></svg>'
 
-        # Preço vigente: sempre o preço do momento
+        # Preço vigente: sempre o preço do momento (converte Decimal do Postgres para float)
         leilao = self.leilao_ativo()
-        current_price = float(self.preco_desconto)
+        current_price = float(self.preco_desconto or 0.0)
+        original_price = float(self.preco_original or 0.0)
 
         # Calculate discount
         discount = 0
-        if self.preco_original and self.preco_original > 0:
-            discount = round(((self.preco_original - current_price) / self.preco_original) * 100)
+        if original_price > 0:
+            discount = max(0, round(((original_price - current_price) / original_price) * 100))
 
         # Avaliações reais do banco (prioriza deste produto + avaliações gerais da loja)
         prod_reviews = []
         rating_avg = 5.0
         rating_count = 0
         try:
-            store_revs = (
-                Avaliacao.query
-                .filter_by(estabelecimento_id=self.estabelecimento_id)
-                .order_by(Avaliacao.criado_em.desc(), Avaliacao.id.desc())
-                .all()
-            )
+            if store_reviews_map is not None:
+                store_revs = store_reviews_map.get(self.estabelecimento_id, [])
+            else:
+                store_revs = (
+                    Avaliacao.query
+                    .filter_by(estabelecimento_id=self.estabelecimento_id)
+                    .order_by(Avaliacao.criado_em.desc(), Avaliacao.id.desc())
+                    .all()
+                )
             if store_revs:
                 rating_count = len(store_revs)
                 rating_avg = round(sum(r.nota for r in store_revs) / rating_count, 1)
@@ -254,8 +389,8 @@ class Produto(db.Model):
             'description': self.descricao or '',
             'quantityLabel': f'{self.quantidade} unidades',
             'price': current_price,
-            'originalPrice': float(self.preco_original),
-            'old_price': float(self.preco_original),
+            'originalPrice': original_price,
+            'old_price': original_price,
             'discountLabel': f'-{discount}% OFF' if discount > 0 else None,
             'expiresLabel': expires_in,
             'expires_in': expires_in,
@@ -263,7 +398,7 @@ class Produto(db.Model):
             'store': self.estabelecimento.nome if self.estabelecimento else "Padaria Central",
             'storeAddress': f"{self.estabelecimento.endereco} - {self.estabelecimento.cidade}/{self.estabelecimento.estado}" if self.estabelecimento else "Rua São Paulo, 100 - Centro",
             'distance': "1,2 km de você",
-            'validity': self.data_validade,
+            'validity': validity_str,
             'icon': self.imagem if self.imagem else svg,
             'image': self.imagem if self.imagem else svg,
             'quantity': self.quantidade,
@@ -305,7 +440,7 @@ class Pedido(db.Model):
     quantidade = db.Column(db.Integer, nullable=False)
     codigo_reserva = db.Column(db.String(10), nullable=False)
     status = db.Column(db.String(20), nullable=False, default='pendente')
-    criado_em = db.Column(db.DateTime, default=datetime.now)
+    criado_em = db.Column(db.DateTime, default=_now_brt)
     # Preço unitário efetivamente cobrado (no "preço que cai" cada pedido pode ter um preço diferente).
     # Pedidos antigos têm NULL → usar valor_unitario(), que cai para produto.preco_desconto.
     preco_unitario = db.Column(db.Float)
@@ -331,7 +466,7 @@ class Avaliacao(db.Model):
     comentario = db.Column(db.Text, nullable=False)
     tags = db.Column(db.String(250))
     resposta_lojista = db.Column(db.Text)
-    criado_em = db.Column(db.DateTime, default=datetime.now)
+    criado_em = db.Column(db.DateTime, default=_now_brt)
 
     usuario = db.relationship('Usuario', backref=db.backref('avaliacoes', lazy=True))
     produto = db.relationship('Produto', backref=db.backref('avaliacoes', lazy=True))
@@ -366,9 +501,16 @@ LEILAO_INTERVALO_MIN = 15             # o preço cai a cada 15 minutos
 LEILAO_DURACOES_HORAS = (1, 2, 4, 8)  # tempo até chegar ao preço mínimo
 
 
-def _round_cents(value):
-    """Arredonda para centavos igual ao Math.round do frontend (evita divergência de 1 centavo)."""
-    return math.floor(value * 100 + 0.5) / 100
+def _preload_store_reviews():
+    """Carrega avaliações agrupadas por estabelecimento em uma única query (evita N+1)."""
+    revs_map = {}
+    try:
+        all_revs = Avaliacao.query.order_by(Avaliacao.criado_em.desc(), Avaliacao.id.desc()).all()
+        for r in all_revs:
+            revs_map.setdefault(r.estabelecimento_id, []).append(r)
+    except Exception:
+        pass
+    return revs_map
 
 
 def _iso_utc(dt):
@@ -491,11 +633,14 @@ def user_payload(user):
 
 def verify_password(user, password):
     """Confere a senha (hash Werkzeug; aceita texto puro legado e já converte para hash)."""
-    if not user or not password:
+    if not user or not isinstance(password, str) or not password:
         return False
     stored = user.senha or ''
     if stored.startswith(('pbkdf2:', 'scrypt:')):
-        return check_password_hash(stored, password)
+        try:
+            return check_password_hash(stored, password)
+        except ValueError:
+            return False
     if stored == password:
         user.senha = generate_password_hash(password)
         db.session.commit()
@@ -508,14 +653,14 @@ def get_or_create_store(user):
     estab = Estabelecimento.query.filter_by(usuario_id=user.id).order_by(Estabelecimento.id.asc()).first()
     if estab:
         return estab
-    email = user.email
-    if Estabelecimento.query.filter_by(email=email).first():
-        email = f"loja{user.id}.{user.email}"
+    email = _clean_str(user.email, 150)
+    if not email or Estabelecimento.query.filter(db.func.lower(Estabelecimento.email) == email.lower()).first():
+        email = f"loja{user.id}-{uuid.uuid4().hex[:6]}@cheapfood.local"[:150]
     estab = Estabelecimento(
         usuario_id=user.id,
-        nome=(user.nome or 'Minha Loja').strip() or 'Minha Loja',
+        nome=_clean_str(user.nome, 150) or 'Minha Loja',
         email=email,
-        telefone=user.telefone or None,
+        telefone=_clean_str(user.telefone, 20) or None,
         endereco='Endereço não informado',
         cidade='Marília',
         estado='SP',
@@ -568,7 +713,7 @@ def send_email(to_address, subject, body):
         msg['From'] = os.environ.get('SMTP_FROM') or os.environ.get('SMTP_USER') or 'no-reply@cheapfood.app'
         msg['To'] = to_address
         msg.set_content(body)
-        port = int(os.environ.get('SMTP_PORT', '587'))
+        port = _env_int('SMTP_PORT', 587)
         with smtplib.SMTP(host, port, timeout=15) as smtp:
             smtp.starttls()
             if os.environ.get('SMTP_USER'):
@@ -597,11 +742,11 @@ def generate_reservation_code():
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
 
-    email = (data.get('email') or '').strip().lower()
-    password = data.get('password') or ''
-    if not email or not password:
+    email = _clean_str(data.get('email'), 150).lower()
+    password = data.get('password')
+    if not email or not isinstance(password, str) or not password:
         return jsonify({'message': 'E-mail e senha são obrigatórios'}), 400
     if len(password) < 6:
         return jsonify({'message': 'A senha deve ter pelo menos 6 caracteres'}), 400
@@ -616,20 +761,25 @@ def register():
     tipo = 'ADMIN' if role == 'merchant' else 'CLIENTE'
 
     user = Usuario(
-        nome=(data.get('name') or '').strip(),
+        nome=_clean_str(data.get('name'), 100) or email.split('@')[0][:100],
         email=email,
         senha=generate_password_hash(password),
-        telefone=data.get('telefone', ''),
+        telefone=_clean_str(data.get('telefone'), 20),
         tipo=tipo
     )
 
-    db.session.add(user)
-    db.session.commit()
+    try:
+        db.session.add(user)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'message': 'Este e-mail já está cadastrado'}), 409
 
     if tipo == 'ADMIN':
         estab = get_or_create_store(user)
-        if data.get('storeName'):
-            estab.nome = data['storeName'].strip()
+        store_name = _clean_str(data.get('storeName'), 150)
+        if store_name:
+            estab.nome = store_name
             db.session.commit()
 
     return jsonify({
@@ -640,16 +790,17 @@ def register():
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
 
-    email = (data.get('email') or '').strip().lower()
-    if not email or not data.get('password'):
+    email = _clean_str(data.get('email'), 150).lower()
+    password = data.get('password')
+    if not email or not isinstance(password, str) or not password:
         return jsonify({'message': 'E-mail e senha são obrigatórios'}), 400
 
     user = Usuario.query.filter(db.func.lower(Usuario.email) == email).first()
 
     # Mensagem genérica para não revelar quais e-mails estão cadastrados
-    if not user or not verify_password(user, data['password']):
+    if not user or not verify_password(user, password):
         return jsonify({'message': 'E-mail ou senha incorretos'}), 401
 
     return jsonify({
@@ -671,8 +822,8 @@ def logout():
 
 @app.route('/api/auth/forgot-password', methods=['POST'])
 def forgot_password():
-    data = request.get_json(silent=True) or {}
-    email = (data.get('email') or '').strip().lower()
+    data = _json_dict()
+    email = _clean_str(data.get('email'), 150).lower()
     generic_msg = 'Se o e-mail estiver cadastrado, você receberá um link para redefinir a senha.'
 
     user = Usuario.query.filter(db.func.lower(Usuario.email) == email).first() if email else None
@@ -681,7 +832,9 @@ def forgot_password():
 
     # O token inclui um trecho do hash atual da senha → fica inválido após o uso.
     token = reset_serializer.dumps({'uid': user.id, 'h': (user.senha or '')[-12:]})
-    reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
+    origin_url = (request.headers.get('Origin') or '').strip().rstrip('/')
+    base_front = FRONTEND_URL or origin_url or request.host_url.rstrip('/') or 'http://localhost:5173'
+    reset_url = f"{base_front}/reset-password?token={token}"
 
     sent = send_email(
         user.email,
@@ -700,31 +853,25 @@ def forgot_password():
 
 @app.route('/api/auth/reset-password', methods=['POST'])
 def reset_password():
-    data = request.get_json(silent=True) or {}
-    token = data.get('token') or ''
-    email = (data.get('email') or '').strip().lower()
-    password = data.get('password') or ''
+    data = _json_dict()
+    token = _clean_str(data.get('token'))
+    password = data.get('password')
 
-    if not password or len(password) < 6:
+    if not isinstance(password, str) or len(password) < 6:
         return jsonify({'message': 'A senha deve ter pelo menos 6 caracteres'}), 400
 
-    user = None
-    if token:
-        try:
-            payload = reset_serializer.loads(token, max_age=RESET_TOKEN_MAX_AGE)
-            user = db.session.get(Usuario, int(payload.get('uid', 0)))
-            if not user or (user.senha or '')[-12:] != payload.get('h'):
-                return jsonify({'message': 'Este link já foi utilizado ou é inválido.'}), 400
-        except SignatureExpired:
-            return jsonify({'message': 'Este link expirou. Solicite uma nova redefinição.'}), 400
-        except BadSignature:
-            return jsonify({'message': 'Link inválido. Solicite uma nova redefinição de senha.'}), 400
-    elif email and DEMO_MODE:
-        user = Usuario.query.filter(db.func.lower(Usuario.email) == email).first()
-        if not user:
-            return jsonify({'message': 'Usuário não encontrado'}), 404
-    else:
-        return jsonify({'message': 'Token de redefinição obrigatório'}), 400
+    if not token:
+        return jsonify({'message': 'Token de redefinição obrigatório. Solicite um novo link.'}), 400
+
+    try:
+        payload = reset_serializer.loads(token, max_age=RESET_TOKEN_MAX_AGE)
+        user = db.session.get(Usuario, int(payload.get('uid', 0)))
+        if not user or (user.senha or '')[-12:] != payload.get('h'):
+            return jsonify({'message': 'Este link já foi utilizado ou é inválido.'}), 400
+    except SignatureExpired:
+        return jsonify({'message': 'Este link expirou. Solicite uma nova redefinição.'}), 400
+    except (BadSignature, ValueError, TypeError):
+        return jsonify({'message': 'Link inválido. Solicite uma nova redefinição de senha.'}), 400
 
     user.senha = generate_password_hash(password)
     db.session.commit()
@@ -738,7 +885,7 @@ def reset_password():
 
 def _smart_fallback_image_analysis(filename: str):
     fname = (filename or '').lower()
-    validade_padrao = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+    validade_padrao = (_now_brt() + timedelta(days=2)).strftime('%Y-%m-%d')
     presets = [
         (['leite', 'italac', 'ninho', 'piracanjuba'], {
             'nome': 'Leite UHT Integral 1L',
@@ -819,15 +966,12 @@ def analyze_image(_user, _estab):
         return jsonify({'message': 'Nenhuma imagem enviada'}), 400
 
     fallback_data = _smart_fallback_image_analysis(file.filename)
-
-    # Garante o carregamento do .env local do projeto com override=True
-    load_dotenv(os.path.join(basedir, '.env'), override=True)
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
 
     if not api_key:
         print("Aviso: GEMINI_API_KEY não encontrada, usando fallback.", flush=True)
         fallback_data['aiProvider'] = 'fallback'
-        fallback_data['aiReason'] = 'GEMINI_API_KEY não configurada no servidor'
+        fallback_data['aiReason'] = 'IA visual em modo demonstração'
         return jsonify(fallback_data), 200
 
     try:
@@ -839,7 +983,12 @@ def analyze_image(_user, _estab):
 
         file.stream.seek(0)
         img = PIL.ImageOps.exif_transpose(PIL.Image.open(file.stream))
-        if img.mode not in ("RGB", "RGBA"):
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            bg = PIL.Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
             img = img.convert("RGB")
         img.thumbnail((800, 800), PIL.Image.Resampling.LANCZOS)
 
@@ -874,22 +1023,29 @@ def analyze_image(_user, _estab):
             "gemini-3.1-flash-lite",
             "gemini-flash-lite-latest",
             "gemini-3.5-flash",
-            "gemini-3.6-flash",
-            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
         ]
 
         dados = None
         last_err = None
+        deadline = time.monotonic() + 26.0
 
         for model_name in candidate_models:
+            remaining = deadline - time.monotonic()
+            if remaining < 3.0:
+                break
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
                 req = urllib.request.Request(
                     url,
                     data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"}
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": api_key,
+                    }
                 )
-                with urllib.request.urlopen(req, timeout=18) as resp:
+                with urllib.request.urlopen(req, timeout=min(10.0, remaining)) as resp:
                     resp_json = json.loads(resp.read().decode("utf-8"))
                     raw_text = resp_json['candidates'][0]['content']['parts'][0]['text'].strip()
                     if raw_text.startswith("```"):
@@ -904,37 +1060,53 @@ def analyze_image(_user, _estab):
                         break
             except Exception as model_err:
                 last_err = model_err
-                print(f"Tentativa com modelo {model_name} falhou: {model_err}", flush=True)
+                print(f"Tentativa com modelo {model_name} falhou: {type(model_err).__name__}", flush=True)
                 continue
 
         if not dados or not isinstance(dados, dict):
             raise last_err or RuntimeError("Nenhum modelo Gemini retornou resposta válida")
 
         valid_categories = ["Laticínios", "Padaria", "Hortifruti", "Bebidas", "Carnes", "Frios", "Congelados", "Outros"]
-        cat = dados.get("categoria")
+        cat = _clean_str(dados.get("categoria"), 80)
         if cat not in valid_categories:
             if cat in ("Doces", "Sobremesas", "Guloseimas"):
                 dados["categoria"] = "Padaria"
+            elif "latic" in cat.lower() or "leite" in cat.lower():
+                dados["categoria"] = "Laticínios"
             else:
                 dados["categoria"] = "Outros"
+        else:
+            dados["categoria"] = cat
 
-        # Se a data de validade não estiver visível na foto (ex: pote visto de frente),
-        # sugere a validade padrão anti-desperdício para não deixar o campo vazio
-        if not dados.get('data_validade'):
-            dados['data_validade'] = fallback_data.get('data_validade')
+        dados["nome"] = _clean_str(dados.get("nome"), 150) or fallback_data["nome"]
+        dados["descricao"] = _clean_str(dados.get("descricao"), 600) or fallback_data["descricao"]
 
-        if not dados.get('preco_original'):
-            dados['preco_original'] = fallback_data.get('preco_original', 12.90)
-        if not dados.get('preco_desconto'):
-            dados['preco_desconto'] = fallback_data.get('preco_desconto', 6.90)
+        val_date, val_iso = _parse_validity_date(dados.get('data_validade'))
+        dados['data_validade'] = val_iso if val_date else fallback_data['data_validade']
 
+        try:
+            orig_p = round(_parse_float(dados.get('preco_original')), 2)
+            if orig_p <= 0:
+                raise ValueError('<=0')
+        except (TypeError, ValueError):
+            orig_p = float(fallback_data.get('preco_original', 12.90))
+
+        try:
+            disc_p = round(_parse_float(dados.get('preco_desconto')), 2)
+            if disc_p <= 0 or disc_p >= orig_p:
+                disc_p = round(max(0.50, orig_p * 0.55), 2)
+        except (TypeError, ValueError):
+            disc_p = round(max(0.50, orig_p * 0.55), 2)
+
+        dados['preco_original'] = orig_p
+        dados['preco_desconto'] = min(disc_p, orig_p)
         dados['aiProvider'] = 'gemini'
         return jsonify(dados), 200
 
     except Exception as e:
-        print("Aviso: usando fallback inteligente de IA devido a erro:", e, flush=True)
+        print("Aviso: usando fallback inteligente de IA devido a erro:", type(e).__name__, flush=True)
         fallback_data['aiProvider'] = 'fallback'
-        fallback_data['aiReason'] = str(e)
+        fallback_data['aiReason'] = 'Serviço de visão indisponível no momento'
         return jsonify(fallback_data), 200
 
 
@@ -952,93 +1124,101 @@ def products():
             return jsonify({'message': 'Acesso restrito a comerciantes'}), 403
         estab = get_or_create_store(user)
 
-        nome = (request.form.get('nome') or '').strip()
-        categoria = request.form.get('categoria')
-        data_validade = request.form.get('data_validade')
-        if not nome or not data_validade:
-            return jsonify({'message': 'Nome e data de validade são obrigatórios'}), 400
-        
-        try:
-            preco_original = float(request.form.get('preco_original', 0))
-            preco_desconto = float(request.form.get('preco_desconto', 0))
-            quantidade = int(request.form.get('quantidade', 0))
-        except ValueError:
-            preco_original = 0.0
-            preco_desconto = 0.0
-            quantidade = 0
+        nome = _clean_str(request.form.get('nome'), 150)
+        categoria = _clean_str(request.form.get('categoria'), 80) or 'Outros'
+        val_date, data_validade = _parse_validity_date(request.form.get('data_validade'))
+        if not nome or not val_date:
+            return jsonify({'message': 'Nome e data de validade válida (AAAA-MM-DD) são obrigatórios'}), 400
 
-        # ---- Modo "preço que cai" (leilão holandês) ----
+        try:
+            preco_original = round(_parse_float(request.form.get('preco_original')), 2)
+            preco_desconto = round(_parse_float(request.form.get('preco_desconto')), 2)
+            quantidade = int(request.form.get('quantidade'))
+        except (TypeError, ValueError):
+            return jsonify({'message': 'Informe preços e quantidade numéricos válidos'}), 400
+
+        if preco_original <= 0 or preco_desconto <= 0:
+            return jsonify({'message': 'Os preços devem ser maiores que zero'}), 400
+        if preco_desconto > preco_original:
+            return jsonify({'message': 'O preço promocional não pode ser maior que o preço original'}), 400
+        if quantidade < 1 or quantidade > 1_000_000:
+            return jsonify({'message': 'A quantidade deve ser de pelo menos 1 unidade'}), 400
+
+        # ---- Modo Leilão Híbrido ----
         leilao_params = None
         if (request.form.get('modo') or '').upper() == 'LEILAO':
             try:
-                preco_inicial = round(float(request.form.get('preco_inicial', 0)), 2)
-                preco_minimo = round(float(request.form.get('preco_minimo', 0)), 2)
-                data_fim_leilao_str = request.form.get('data_fim_leilao')
+                preco_inicial = round(_parse_float(request.form.get('preco_inicial')), 2)
+                preco_minimo = round(_parse_float(request.form.get('preco_minimo', preco_desconto)), 2)
+                data_fim_leilao_str = _clean_str(request.form.get('data_fim_leilao'))
                 if not data_fim_leilao_str:
                     return jsonify({'message': 'Data e hora de fim do leilão não fornecida'}), 400
-                from datetime import datetime
-                import datetime as dt_mod
-                
-                # Treat the input datetime-local as UTC if sending from JS toISOString()
+
                 clean_str = data_fim_leilao_str.replace('Z', '+00:00')
                 if len(clean_str) == 16:
                     clean_str += ":00"
                 leilao_fim = datetime.fromisoformat(clean_str)
-                # Convert to naive UTC if it has tzinfo
                 if leilao_fim.tzinfo:
-                    leilao_fim = leilao_fim.astimezone(dt_mod.timezone.utc).replace(tzinfo=None)
-            except ValueError:
+                    leilao_fim = leilao_fim.astimezone(timezone.utc).replace(tzinfo=None)
+            except (TypeError, ValueError):
                 return jsonify({'message': 'Valores do leilão inválidos ou data mal formatada'}), 400
 
             if preco_inicial <= 0:
                 return jsonify({'message': 'O lance inicial deve ser maior que zero'}), 400
+            if preco_inicial >= preco_desconto:
+                return jsonify({'message': 'O lance inicial deve ser menor que o preço de compra imediata'}), 400
             if preco_minimo < preco_inicial:
-                return jsonify({'message': 'O preço de compra imediata deve ser maior ou igual ao lance inicial'}), 400
-            
+                return jsonify({'message': 'O preço de compra imediata deve ser maior que o lance inicial'}), 400
             if leilao_fim <= _utcnow():
                 return jsonify({'message': 'A data de fim do leilão deve estar no futuro'}), 400
 
-            leilao_params = (preco_inicial, preco_minimo, leilao_fim)
-            
+            leilao_params = (preco_inicial, preco_desconto, leilao_fim)
+
         try:
             imagem_filename = save_upload(request.files.get('imagem') or request.files.get('image'))
         except ValueError as e:
             return jsonify({'message': str(e)}), 400
-            
+
         produto = Produto(
             estabelecimento_id=estab.id,
             nome=nome,
-            descricao=request.form.get('descricao') or None,
+            descricao=_clean_str(request.form.get('descricao'), 2000) or None,
             categoria=categoria,
             preco_original=preco_original,
             preco_desconto=preco_desconto,
             quantidade=quantidade,
             data_validade=data_validade,
-            imagem=imagem_filename
+            imagem=imagem_filename,
+            status='DISPONIVEL'
         )
-        
-        db.session.add(produto)
-        db.session.flush()  # garante produto.id para o leilão
 
-        if leilao_params:
-            preco_inicial, preco_minimo, leilao_fim = leilao_params
-            inicio = _utcnow().replace(microsecond=0)
-            db.session.add(Leilao(
-                produto_id=produto.id,
-                preco_inicial=preco_inicial,
-                preco_minimo=preco_minimo,
-                inicio=inicio,
-                fim=leilao_fim,
-                intervalo_min=LEILAO_INTERVALO_MIN,
-            ))
+        try:
+            db.session.add(produto)
+            db.session.flush()  # garante produto.id para o leilão
 
-        db.session.commit()
-        
+            if leilao_params:
+                preco_inicial, preco_minimo, leilao_fim = leilao_params
+                inicio = _utcnow().replace(microsecond=0)
+                db.session.add(Leilao(
+                    produto_id=produto.id,
+                    preco_inicial=preco_inicial,
+                    preco_minimo=preco_minimo,
+                    inicio=inicio,
+                    fim=leilao_fim,
+                    intervalo_min=LEILAO_INTERVALO_MIN,
+                ))
+
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({'message': 'Dados do produto inválidos (verifique preços e estoque)'}), 400
+
         return jsonify(produto.to_dict()), 201
 
     # GET
+    revs_map = _preload_store_reviews()
     produtos = Produto.query.filter(Produto.status == 'DISPONIVEL', Produto.pausado.isnot(True)).all()
-    return jsonify([p.to_dict() for p in produtos]), 200
+    return jsonify([p.to_dict(store_reviews_map=revs_map) for p in produtos]), 200
 
 
 @app.route('/api/recommendations', methods=['GET'])
@@ -1096,12 +1276,13 @@ def get_recommendations():
         Produto.quantidade > 0
     ).all()
 
+    revs_map = _preload_store_reviews()
     scored_items = []
     buy_again_items = []
 
     for p in produtos:
-        p_dict = p.to_dict()
-        if 'Vencido' in (p_dict.get('expires_in') or ''):
+        p_dict = p.to_dict(store_reviews_map=revs_map)
+        if 'Vencido' in str(p_dict.get('expires_in') or ''):
             continue
 
         cat = p.categoria or 'Outros'
@@ -1117,11 +1298,13 @@ def get_recommendations():
             score += 3.5
 
         disc_pct = 0
-        if p.preco_original and p.preco_original > 0:
-            disc_pct = round(((p.preco_original - p.preco_desconto) / p.preco_original) * 100)
+        orig_p = float(p.preco_original or 0.0)
+        disc_p = float(p.preco_desconto or 0.0)
+        if orig_p > 0:
+            disc_pct = max(0, round(((orig_p - disc_p) / orig_p) * 100))
         score += (disc_pct / 15.0)
 
-        exp_lower = (p_dict.get('expires_in') or '').lower()
+        exp_lower = str(p_dict.get('expires_in') or '').lower()
         if 'hoje' in exp_lower or 'amanh' in exp_lower:
             score += 2.0
 
@@ -1160,8 +1343,10 @@ def get_recommendations():
     scored_items.sort(key=lambda x: (x['affinityScore'], x.get('ratingAverage', 5)), reverse=True)
     buy_again_items.sort(key=lambda x: x['timesOrdered'], reverse=True)
 
+    user_first_name = (user.nome.strip().split()[0] if (user and user.nome and user.nome.strip()) else 'Você')
+
     return jsonify({
-        'userName': user.nome.split()[0] if (user and user.nome) else 'Você',
+        'userName': user_first_name,
         'topCategories': top_categories if top_categories else ['Laticínios', 'Padaria', 'Frios'],
         'forYou': scored_items[:6],
         'buyAgain': buy_again_items[:4],
@@ -1183,61 +1368,100 @@ def get_product(product_id):
             return jsonify({'message': 'Você não tem permissão para editar este produto'}), 403
 
         if request.is_json:
-            data = request.get_json(silent=True) or {}
+            data = _json_dict()
         else:
             data = request.form
 
         try:
-            if 'nome' in data: produto.nome = data['nome']
-            if 'descricao' in data: produto.descricao = data['descricao']
-            if 'categoria' in data: produto.categoria = data['categoria']
-            if 'preco_original' in data: produto.preco_original = float(data['preco_original'])
-            if 'preco_desconto' in data: produto.preco_desconto = float(data['preco_desconto'])
+            if 'nome' in data:
+                novo_nome = _clean_str(data['nome'], 150)
+                if not novo_nome:
+                    return jsonify({'message': 'O nome do produto é obrigatório'}), 400
+                produto.nome = novo_nome
+            if 'descricao' in data:
+                produto.descricao = _clean_str(data['descricao'], 2000) or None
+            if 'categoria' in data:
+                produto.categoria = _clean_str(data['categoria'], 80) or 'Outros'
+            if 'preco_original' in data:
+                produto.preco_original = round(_parse_float(data['preco_original']), 2)
+            if 'preco_desconto' in data:
+                produto.preco_desconto = round(_parse_float(data['preco_desconto']), 2)
             if 'quantidade' in data:
-                produto.quantidade = int(data['quantidade'])
-                if produto.quantidade > 0 and produto.status == 'ESGOTADO':
-                    produto.status = 'DISPONIVEL'
-            if 'data_validade' in data: produto.data_validade = data['data_validade']
+                qty = int(data['quantidade'])
+                if qty < 0 or qty > 1_000_000:
+                    return jsonify({'message': 'Quantidade inválida'}), 400
+                produto.quantidade = qty
+                produto.status = 'ESGOTADO' if qty == 0 else 'DISPONIVEL'
+            if 'data_validade' in data:
+                v_date, v_iso = _parse_validity_date(data['data_validade'])
+                if not v_date:
+                    return jsonify({'message': 'Data de validade inválida (use AAAA-MM-DD)'}), 400
+                produto.data_validade = v_iso
         except (TypeError, ValueError):
             db.session.rollback()
             return jsonify({'message': 'Valores numéricos inválidos'}), 400
 
-        modo = (data.get('modo') or '').upper()
+        if float(produto.preco_original or 0) <= 0 or float(produto.preco_desconto or 0) <= 0:
+            db.session.rollback()
+            return jsonify({'message': 'Os preços devem ser maiores que zero'}), 400
+        if float(produto.preco_desconto) > float(produto.preco_original):
+            db.session.rollback()
+            return jsonify({'message': 'O preço promocional não pode ser maior que o preço original'}), 400
+
+        modo = _clean_str(data.get('modo')).upper()
         if modo == 'LEILAO':
+            existing_leilao = getattr(produto, 'leilao', None)
+            has_existing_bids = bool(produto.lances)
             try:
-                preco_inicial = round(float(data.get('preco_inicial', 0)), 2)
-                preco_minimo = round(float(data.get('preco_minimo', produto.preco_desconto)), 2)
-                data_fim_str = data.get('data_fim_leilao')
-                if not data_fim_str:
+                preco_inicial = round(_parse_float(data.get('preco_inicial')), 2)
+                preco_minimo = round(_parse_float(data.get('preco_minimo', produto.preco_desconto)), 2)
+                data_fim_str = _clean_str(data.get('data_fim_leilao'))
+                if data_fim_str:
+                    clean_str = data_fim_str.replace('Z', '+00:00')
+                    if len(clean_str) == 16:
+                        clean_str += ':00'
+                    leilao_fim = datetime.fromisoformat(clean_str)
+                    if leilao_fim.tzinfo:
+                        leilao_fim = leilao_fim.astimezone(timezone.utc).replace(tzinfo=None)
+                elif existing_leilao and existing_leilao.fim:
+                    leilao_fim = existing_leilao.fim
+                else:
                     return jsonify({'message': 'Data e hora de fim do leilão não fornecida'}), 400
-                clean_str = data_fim_str.replace('Z', '+00:00')
-                if len(clean_str) == 16:
-                    clean_str += ':00'
-                leilao_fim = datetime.fromisoformat(clean_str)
-                if leilao_fim.tzinfo:
-                    leilao_fim = leilao_fim.astimezone(timezone.utc).replace(tzinfo=None)
             except (TypeError, ValueError):
                 db.session.rollback()
                 return jsonify({'message': 'Valores do leilão inválidos ou data mal formatada'}), 400
 
             if preco_inicial <= 0:
+                db.session.rollback()
                 return jsonify({'message': 'O lance inicial deve ser maior que zero'}), 400
+            if preco_inicial >= float(produto.preco_desconto):
+                db.session.rollback()
+                return jsonify({'message': 'O lance inicial deve ser menor que o preço de compra imediata'}), 400
             if preco_minimo < preco_inicial:
-                return jsonify({'message': 'O preço de compra imediata deve ser maior ou igual ao lance inicial'}), 400
-            if leilao_fim <= _utcnow():
-                return jsonify({'message': 'A data de fim do leilão deve estar no futuro'}), 400
+                db.session.rollback()
+                return jsonify({'message': 'O preço de compra imediata deve ser maior que o lance inicial'}), 400
 
-            existing_leilao = getattr(produto, 'leilao', None)
             if existing_leilao:
+                was_ended_or_inactive = (not existing_leilao.ativo) or existing_leilao.encerrado()
+                if was_ended_or_inactive and leilao_fim > _utcnow():
+                    # Reiniciando um leilão novo após encerramento: limpa lances antigos
+                    Lance.query.filter_by(produto_id=produto.id).delete()
+                    existing_leilao.inicio = _utcnow().replace(microsecond=0)
+                elif not was_ended_or_inactive and leilao_fim <= _utcnow():
+                    db.session.rollback()
+                    return jsonify({'message': 'A data de fim do leilão deve estar no futuro'}), 400
                 existing_leilao.preco_inicial = preco_inicial
-                existing_leilao.preco_minimo = preco_minimo
+                existing_leilao.preco_minimo = float(produto.preco_desconto)
                 existing_leilao.fim = leilao_fim
                 existing_leilao.ativo = True
             else:
+                if leilao_fim <= _utcnow():
+                    db.session.rollback()
+                    return jsonify({'message': 'A data de fim do leilão deve estar no futuro'}), 400
                 db.session.add(Leilao(
                     produto_id=produto.id,
                     preco_inicial=preco_inicial,
-                    preco_minimo=preco_minimo,
+                    preco_minimo=float(produto.preco_desconto),
                     inicio=_utcnow().replace(microsecond=0),
                     fim=leilao_fim,
                     intervalo_min=LEILAO_INTERVALO_MIN,
@@ -1245,8 +1469,12 @@ def get_product(product_id):
                 ))
         elif modo == 'FIXO':
             existing_leilao = getattr(produto, 'leilao', None)
-            if existing_leilao:
-                existing_leilao.ativo = False
+            if existing_leilao and existing_leilao.ativo:
+                # Não destrói silenciosamente leilão encerrado com vencedor aguardando resgate
+                if existing_leilao.encerrado() and existing_leilao.lance_vencedor():
+                    pass
+                else:
+                    existing_leilao.ativo = False
 
         # Handle image if uploaded (accept both 'image' and 'imagem')
         try:
@@ -1256,8 +1484,13 @@ def get_product(product_id):
             return jsonify({'message': str(e)}), 400
         if new_image:
             produto.imagem = new_image
-                
-        db.session.commit()
+
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({'message': 'Dados inválidos ao salvar o produto'}), 400
+
         return jsonify(produto.to_dict()), 200
         
     return jsonify(produto.to_dict()), 200
@@ -1269,24 +1502,43 @@ def checkout():
     if not user:
         return jsonify({'message': 'Faça login para finalizar a reserva'}), 401
 
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
     items = data.get('items', [])
-    if not items:
+    if not isinstance(items, list) or not items:
         return jsonify({'message': 'Carrinho vazio'}), 400
 
-    # Valida todos os itens antes de gravar (tudo ou nada)
-    to_reserve = []
+    # Agrega quantidades de IDs duplicados antes de validar estoque (evita bypass de estoque)
+    aggregated = {}
+    ordered_ids = []
     for item in items:
+        if not isinstance(item, dict):
+            return jsonify({'message': 'Item inválido no carrinho'}), 400
         try:
             product_id = int(item.get('id'))
             qty = int(item.get('quantity', 1))
         except (TypeError, ValueError):
             return jsonify({'message': 'Item inválido no carrinho'}), 400
+        if qty <= 0 or product_id <= 0:
+            return jsonify({'message': 'Quantidade inválida no carrinho'}), 400
+        if product_id not in aggregated:
+            ordered_ids.append(product_id)
+            aggregated[product_id] = 0
+        aggregated[product_id] += qty
 
-        produto = db.session.get(Produto, product_id)
+    # Valida todos os itens antes de gravar (tudo ou nada), com row lock em Postgres
+    to_reserve = []
+    is_postgres = not _database_url.startswith('sqlite:')
+    for product_id in ordered_ids:
+        qty = aggregated[product_id]
+        if is_postgres:
+            produto = Produto.query.filter_by(id=product_id).with_for_update().first()
+        else:
+            produto = db.session.get(Produto, product_id)
         if not produto or produto.status != 'DISPONIVEL' or produto.pausado:
+            db.session.rollback()
             return jsonify({'message': 'Um dos produtos não está mais disponível'}), 409
-        if qty <= 0 or produto.quantidade < qty:
+        if produto.quantidade < qty:
+            db.session.rollback()
             return jsonify({'message': f'Estoque insuficiente para "{produto.nome}" (restam {produto.quantidade})'}), 409
         to_reserve.append((produto, qty))
 
@@ -1308,6 +1560,7 @@ def checkout():
             store_address = f"{produto.estabelecimento.endereco} - {produto.estabelecimento.cidade}/{produto.estabelecimento.estado}"
 
         leilao = produto.leilao_ativo()
+        is_winner_claim = False
         if leilao and leilao.encerrado(now):
             vencedor = leilao.lance_vencedor()
             if vencedor and vencedor.usuario_id == user.id:
@@ -1316,6 +1569,7 @@ def checkout():
                     return jsonify({'message': 'O lote arrematado no leilão é de 1 unidade'}), 400
                 unit_price = float(vencedor.valor)
                 leilao.ativo = False
+                is_winner_claim = True
             elif vencedor and produto.quantidade - qty < 1:
                 db.session.rollback()
                 return jsonify({'message': f'O leilão de "{produto.nome}" foi arrematado por outro usuário'}), 403
@@ -1326,8 +1580,10 @@ def checkout():
         produto.quantidade -= qty
         if produto.quantidade <= 0:
             produto.status = 'ESGOTADO'
+            if leilao and not is_winner_claim:
+                leilao.ativo = False
         db.session.add(Pedido(cliente_id=user.id, produto_id=produto.id, quantidade=qty,
-                              codigo_reserva=code, preco_unitario=unit_price))
+                              codigo_reserva=code, preco_unitario=unit_price, criado_em=_now_brt()))
         reserved_items.append({
             'id': str(produto.id),
             'name': produto.nome,
@@ -1337,7 +1593,12 @@ def checkout():
             'total': round(unit_price * qty, 2)
         })
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'message': 'Não foi possível concluir a reserva por atualização simultânea de estoque. Tente novamente.'}), 409
+
     return jsonify({
         'message': 'Reserva confirmada!',
         'code': code,
@@ -1396,7 +1657,7 @@ def get_order_by_code(user, code):
             'total': line_total
         })
 
-    created_dt = first.criado_em or datetime.now()
+    created_dt = first.criado_em or _now_brt()
     pickup_limit = (created_dt + timedelta(hours=3)).strftime('%H:%M')
 
     return jsonify({
@@ -1485,16 +1746,19 @@ def get_product_reviews(product_id):
 @app.route('/api/reviews', methods=['POST'])
 @require_auth
 def create_review(user):
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
 
     try:
         nota = int(data.get('rating', 5) or 5)
     except (TypeError, ValueError):
         nota = 5
     nota = max(1, min(5, nota))
-    comentario = (data.get('comment') or '').strip()[:1000]
+    comentario = _clean_str(data.get('comment'), 1000)
     tags_list = data.get('tags') or []
-    tags_str = ', '.join(t.strip() for t in tags_list if str(t).strip()) if isinstance(tags_list, list) else str(tags_list or '')
+    if isinstance(tags_list, list):
+        tags_str = ', '.join(str(t).strip() for t in tags_list if t is not None and str(t).strip())[:250]
+    else:
+        tags_str = _clean_str(tags_list, 250)
 
     if not comentario and tags_str:
         comentario = f"Pontos destacados: {tags_str}."
@@ -1507,21 +1771,25 @@ def create_review(user):
     pedido = None
     produto = None
 
-    if order_id and str(order_id).isdigit():
-        pedido = db.session.get(Pedido, int(order_id))
+    if order_id is not None and str(order_id).isdigit():
+        oid = int(str(order_id))
+        if 0 < oid <= 2_147_483_647:
+            pedido = db.session.get(Pedido, oid)
         if pedido and pedido.cliente_id != user.id:
             return jsonify({'message': 'Você só pode avaliar os seus próprios pedidos'}), 403
         if pedido and pedido.produto:
             produto = pedido.produto
 
-    if not produto and product_id and str(product_id).isdigit():
-        produto = db.session.get(Produto, int(product_id))
+    if not produto and product_id is not None and str(product_id).isdigit():
+        pid = int(str(product_id))
+        if 0 < pid <= 2_147_483_647:
+            produto = db.session.get(Produto, pid)
 
     estab = produto.estabelecimento if (produto and produto.estabelecimento) else None
     if not estab:
         return jsonify({'message': 'Produto ou estabelecimento não encontrado'}), 404
 
-    autor_nome = (user.nome or 'Cliente CheapFood').strip()
+    autor_nome = _clean_str(user.nome, 100) or 'Cliente CheapFood'
 
     # Se for avaliação de um pedido específico (ou do mesmo usuário para o mesmo produto) e já existir, atualiza
     rev = None
@@ -1534,7 +1802,7 @@ def create_review(user):
         rev.nota = nota
         rev.comentario = comentario
         rev.tags = tags_str
-        rev.criado_em = datetime.now()
+        rev.criado_em = _now_brt()
     else:
         rev = Avaliacao(
             usuario_id=user.id,
@@ -1545,7 +1813,7 @@ def create_review(user):
             nota=nota,
             comentario=comentario,
             tags=tags_str,
-            criado_em=datetime.now()
+            criado_em=_now_brt()
         )
         db.session.add(rev)
 
@@ -1582,8 +1850,8 @@ def reply_merchant_review(_user, estab, review_id):
     if not rev or rev.estabelecimento_id != estab.id:
         return jsonify({'message': 'Avaliação não encontrada'}), 404
 
-    data = request.get_json(silent=True) or {}
-    reply = (data.get('reply') or '').strip()
+    data = _json_dict()
+    reply = _clean_str(data.get('reply'), 1000)
     rev.resposta_lojista = reply if reply else None
     db.session.commit()
 
@@ -1601,46 +1869,50 @@ def reply_merchant_review(_user, estab, review_id):
 @require_merchant
 def merchant_store(_user, estab):
     if request.method == 'PUT':
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         if 'cnpj' in data:
-            new_cnpj = (data['cnpj'] or '').strip() or None
+            new_cnpj = _clean_str(data.get('cnpj'), 18) or None
             if new_cnpj and Estabelecimento.query.filter(
                 Estabelecimento.cnpj == new_cnpj,
                 Estabelecimento.id != estab.id
             ).first():
                 return jsonify({'message': 'Este CNPJ já está cadastrado em outra loja'}), 409
             estab.cnpj = new_cnpj
-        if 'email' in data and data['email']:
-            new_email = data['email'].strip()
+        if 'email' in data and _clean_str(data.get('email'), 150):
+            new_email = _clean_str(data.get('email'), 150)
             if Estabelecimento.query.filter(
                 db.func.lower(Estabelecimento.email) == new_email.lower(),
                 Estabelecimento.id != estab.id
             ).first():
                 return jsonify({'message': 'Este e-mail comercial já está em uso por outra loja'}), 409
             estab.email = new_email
-        if 'name' in data and data['name']:
-            estab.nome = data['name'].strip()
-        if 'category' in data and data['category']:
-            estab.categoria = data['category'].strip()
+        if 'name' in data and _clean_str(data.get('name'), 150):
+            estab.nome = _clean_str(data.get('name'), 150)
+        if 'category' in data and _clean_str(data.get('category'), 80):
+            estab.categoria = _clean_str(data.get('category'), 80)
         if 'phone' in data:
-            estab.telefone = data['phone'].strip()
-        if 'address' in data and data['address']:
-            estab.endereco = data['address'].strip()
-        if 'city' in data and data['city']:
-            estab.cidade = data['city'].strip()
-        if 'state' in data and data['state']:
-            estab.estado = data['state'][:2].upper()
+            estab.telefone = _clean_str(data.get('phone'), 20)
+        if 'address' in data and _clean_str(data.get('address'), 200):
+            estab.endereco = _clean_str(data.get('address'), 200)
+        if 'city' in data and _clean_str(data.get('city'), 100):
+            estab.cidade = _clean_str(data.get('city'), 100)
+        if 'state' in data and _clean_str(data.get('state'), 2):
+            estab.estado = _clean_str(data.get('state'), 2).upper()
         if 'cep' in data:
-            estab.cep = data['cep'].strip()
+            estab.cep = _clean_str(data.get('cep'), 9)
         if 'openingHours' in data:
-            estab.horario_funcionamento = data['openingHours'].strip()
+            estab.horario_funcionamento = _clean_str(data.get('openingHours'), 150)
         if 'paymentMethods' in data:
-            estab.formas_pagamento = data['paymentMethods'].strip()
+            estab.formas_pagamento = _clean_str(data.get('paymentMethods'), 200)
         if 'notificationsEnabled' in data:
             estab.notificacoes_ativas = bool(data['notificationsEnabled'])
         if 'plan' in data and data['plan'] in ('free', 'monthly', 'annual'):
             estab.plano = data['plan']
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({'message': 'CNPJ ou e-mail já em uso por outra loja'}), 409
         return jsonify({'message': 'Configurações da loja atualizadas com sucesso!', 'store': estab.to_dict()}), 200
 
     return jsonify(estab.to_dict()), 200
@@ -1649,7 +1921,7 @@ def merchant_store(_user, estab):
 @app.route('/api/merchant/plan', methods=['PATCH'])
 @require_merchant
 def update_merchant_plan(_user, estab):
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
     new_plan = data.get('plan', 'free')
     if new_plan not in ('free', 'monthly', 'annual'):
         return jsonify({'message': 'Plano inválido'}), 400
@@ -1663,7 +1935,7 @@ def update_merchant_plan(_user, estab):
 def get_merchant_stats(_user, estab):
     period = request.args.get('period', '7days')
 
-    now = datetime.now()
+    now = _now_brt()
     today = now.date()
 
     if period == 'today':
@@ -1671,9 +1943,9 @@ def get_merchant_stats(_user, estab):
         prev_start = start_dt - timedelta(days=1)
         prev_end = start_dt
     elif period == 'month':
-        start_dt = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = (now - timedelta(days=27)).replace(hour=0, minute=0, second=0, microsecond=0)
         prev_end = start_dt
-        prev_start = start_dt - timedelta(days=30)
+        prev_start = start_dt - timedelta(days=28)
     elif period == 'year':
         start_dt = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
         prev_end = start_dt
@@ -1690,13 +1962,11 @@ def get_merchant_stats(_user, estab):
     for p in all_estab_products:
         if p.status == 'DISPONIVEL' and not p.pausado and p.quantidade > 0:
             active_products += 1
-            try:
-                v_date = datetime.strptime(p.data_validade, '%Y-%m-%d').date()
+            v_date, _ = _parse_validity_date(p.data_validade)
+            if v_date is not None:
                 diff = (v_date - today).days
                 if 0 <= diff <= 5:
                     expiring_soon += 1
-            except Exception:
-                pass
 
     all_orders = Pedido.query.join(Produto).filter(Produto.estabelecimento_id == estab.id).all()
     reservations = sum(1 for o in all_orders if o.status == 'pendente')
@@ -1717,7 +1987,7 @@ def get_merchant_stats(_user, estab):
 
     daily_sales = []
     if period == 'today':
-        buckets = [('08h', 8, 10), ('10h', 10, 12), ('12h', 12, 14), ('14h', 14, 16), ('16h', 16, 18), ('18h', 18, 21), ('20h', 21, 24)]
+        buckets = [('00h-10h', 0, 10), ('10h', 10, 12), ('12h', 12, 14), ('14h', 14, 16), ('16h', 16, 18), ('18h', 18, 21), ('21h+', 21, 24)]
         for label, h_start, h_end in buckets:
             val = sum(
                 o.quantidade * o.valor_unitario()
@@ -1726,7 +1996,7 @@ def get_merchant_stats(_user, estab):
             )
             daily_sales.append({'label': label, 'value': round(val, 2)})
     elif period == 'month':
-        # 4 semanas dos últimos 28 dias
+        # 4 semanas dos últimos 28 dias (alinhado com start_dt)
         for w in range(4):
             w_start = (now - timedelta(days=(3 - w) * 7 + 6)).date()
             w_end = (now - timedelta(days=(3 - w) * 7)).date()
@@ -1775,6 +2045,7 @@ def get_merchant_stats(_user, estab):
         'activeProducts': active_products,
         'expiringSoon': expiring_soon,
         'reservations': reservations,
+        'completedOrdersCount': len(current_completed),
         'dailySales': daily_sales,
         'growth': f"+{growth}%" if growth >= 0 else f"{growth}%",
         'storeName': estab.nome,
@@ -1796,13 +2067,13 @@ def get_merchant_orders(_user, estab):
     result = []
     for o in orders:
         unit_price = o.valor_unitario()
-        created_dt = o.criado_em or datetime.now()
+        created_dt = o.criado_em or _now_brt()
         pickup_limit = (created_dt + timedelta(hours=3)).strftime('%H:%M')
         result.append({
             'id': str(o.id),
             'customerName': o.cliente.nome if o.cliente else 'Cliente',
             'customerEmail': o.cliente.email if o.cliente else '',
-            'customerPhone': o.cliente.telefone if (o.cliente and o.cliente.telefone) else '(14) 99712-3456',
+            'customerPhone': o.cliente.telefone if (o.cliente and o.cliente.telefone) else '',
             'productName': o.produto.nome if o.produto else 'Produto',
             'productImage': o.produto.imagem if o.produto else None,
             'quantity': o.quantidade,
@@ -1823,12 +2094,18 @@ def update_order_status(_user, estab, order_id):
     if not order or not order.produto or order.produto.estabelecimento_id != estab.id:
         return jsonify({'message': 'Pedido não encontrado'}), 404
 
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
     new_status = data.get('status')
     if new_status not in ('pendente', 'retirado', 'expirado'):
         return jsonify({'message': 'Status inválido'}), 400
 
-    if new_status == 'expirado' and order.status == 'pendente':
+    if order.status == new_status:
+        return jsonify({'message': 'Status já atualizado', 'status': order.status}), 200
+
+    if order.status != 'pendente':
+        return jsonify({'message': f'Pedido já finalizado como "{order.status}" e não pode ser alterado'}), 409
+
+    if new_status == 'expirado':
         order.produto.quantidade += order.quantidade
         if order.produto.quantidade > 0 and order.produto.status == 'ESGOTADO':
             order.produto.status = 'DISPONIVEL'
@@ -1841,8 +2118,8 @@ def update_order_status(_user, estab, order_id):
 @app.route('/api/merchant/orders/validate-pin', methods=['POST'])
 @require_merchant
 def validate_order_pin(_user, estab):
-    data = request.get_json(silent=True) or {}
-    code = (data.get('code') or '').strip().upper()
+    data = _json_dict()
+    code = _clean_str(data.get('code'), 10).upper()
     confirm = bool(data.get('confirm', False))
 
     if not code or len(code) < 3:
@@ -1869,9 +2146,13 @@ def validate_order_pin(_user, estab):
     pedidos = sorted(pedidos, key=lambda p: p.id)
 
     if confirm:
-        for p in pedidos:
-            if p.status == 'pendente':
-                p.status = 'retirado'
+        pending_items = [p for p in pedidos if p.status == 'pendente']
+        if not pending_items:
+            st = pedidos[0].status
+            msg = 'Este pedido já foi retirado anteriormente.' if st == 'retirado' else 'Este pedido foi cancelado ou expirou.'
+            return jsonify({'message': msg}), 409
+        for p in pending_items:
+            p.status = 'retirado'
         db.session.commit()
 
     first = pedidos[0]
@@ -1907,24 +2188,27 @@ def reset_demo_data(_user, _estab):
     if not DEMO_MODE:
         return jsonify({'message': 'Restauração de demonstração desabilitada em produção'}), 403
     try:
+        sys.modules.setdefault('app', sys.modules[__name__])
         try:
             from seed_tcc import seed_tcc
         except ModuleNotFoundError:
             from backend.seed_tcc import seed_tcc
-        seed_tcc()
+        seed_tcc(run_migrations=False)
         return jsonify({'message': 'Cenário de apresentação restaurado com sucesso!'}), 200
     except Exception as e:
+        db.session.rollback()
         return jsonify({'message': 'Erro ao restaurar dados de demonstração', 'error': str(e)}), 500
 
 
 @app.route('/api/merchant/products', methods=['GET'])
 @require_merchant
 def get_merchant_products(_user, estab):
+    revs_map = _preload_store_reviews()
     produtos = Produto.query.filter_by(estabelecimento_id=estab.id).order_by(Produto.id.desc()).all()
     
     result = []
     for p in produtos:
-        p_dict = p.to_dict()
+        p_dict = p.to_dict(store_reviews_map=revs_map)
         p_dict['paused'] = bool(p.pausado)
         p_dict['promoPrice'] = p_dict['price']
         reserved_count = sum(o.quantidade for o in (p.pedidos or []) if o.status == 'pendente')
@@ -1932,7 +2216,7 @@ def get_merchant_products(_user, estab):
         p_dict['quantityAvailable'] = p.quantidade
         if p.quantidade <= 0:
             p_dict['status'] = 'vendido'
-        elif 'Vencido' in p_dict['expires_in']:
+        elif 'Vencido' in str(p_dict.get('expires_in') or ''):
             p_dict['status'] = 'vencido'
         else:
             p_dict['status'] = 'ativo'
@@ -1961,21 +2245,21 @@ def apply_extra_discount(_user, estab, product_id):
     if not product:
         return jsonify({'message': 'Produto não encontrado na sua loja'}), 404
 
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
     try:
-        percent = float(data.get('percent', 20))
+        percent = _parse_float(data.get('percent', 20))
     except (TypeError, ValueError):
         percent = 20.0
-    new_price = round(max(0.50, float(product.preco_desconto) * (1.0 - percent / 100.0)), 2)
-    product.preco_desconto = new_price
+    percent = max(1.0, min(95.0, percent))
 
-    # Se o produto estava vencido, renova a validade do lote em +2 dias para voltar à vitrine
-    try:
-        v_date = datetime.strptime(product.data_validade, '%Y-%m-%d').date()
-        if v_date < datetime.now().date():
-            product.data_validade = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
-    except Exception:
-        product.data_validade = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+    orig_p = float(product.preco_original or product.preco_desconto or 1.0)
+    new_price = round(max(0.50, float(product.preco_desconto) * (1.0 - percent / 100.0)), 2)
+    product.preco_desconto = min(new_price, orig_p)
+
+    # Se o produto estava vencido, renova a validade do lote em +2 dias (horário de Brasília)
+    v_date, _ = _parse_validity_date(product.data_validade)
+    if v_date is None or v_date < _now_brt().date():
+        product.data_validade = (_now_brt() + timedelta(days=2)).strftime('%Y-%m-%d')
 
     product.pausado = False
     if product.quantidade <= 0:
@@ -1984,13 +2268,13 @@ def apply_extra_discount(_user, estab, product_id):
     db.session.commit()
 
     return jsonify({
-        'message': f'Desconto extra de {int(percent)}% aplicado! Novo preço: R$ {new_price:.2f}',
+        'message': f'Desconto extra de {int(percent)}% aplicado! Novo preço: R$ {product.preco_desconto:.2f}',
         'product': product.to_dict()
     }), 200
 
 
 # ========================
-# Leilão "Preço que Cai"
+# Leilão Híbrido
 # ========================
 
 @app.route('/api/products/<int:product_id>/bids', methods=['POST'])
@@ -2000,7 +2284,7 @@ def add_bid(product_id):
         return jsonify({'message': 'Faça login para dar um lance'}), 401
 
     produto = db.session.get(Produto, product_id)
-    if not produto or produto.status != 'DISPONIVEL' or produto.pausado:
+    if not produto or produto.status != 'DISPONIVEL' or produto.pausado or produto.quantidade <= 0:
         return jsonify({'message': 'Produto indisponível'}), 409
 
     leilao = produto.leilao_ativo()
@@ -2010,16 +2294,16 @@ def add_bid(product_id):
     if _utcnow() >= leilao.fim:
         return jsonify({'message': 'Este leilão já foi encerrado.'}), 400
 
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
     if 'valor' not in data:
         return jsonify({'message': 'Valor do lance não fornecido'}), 400
 
     try:
-        valor = float(data['valor'])
+        valor = round(_parse_float(data['valor']), 2)
     except (TypeError, ValueError):
         return jsonify({'message': 'Valor inválido'}), 400
 
-    if math.isnan(valor) or math.isinf(valor) or valor <= 0:
+    if valor <= 0:
         return jsonify({'message': 'Informe um valor de lance válido'}), 400
 
     if is_merchant(user) and produto.estabelecimento_id == get_or_create_store(user).id:
@@ -2033,7 +2317,7 @@ def add_bid(product_id):
     if not has_bids and valor < leilao.preco_inicial:
         return jsonify({'message': f'O lance deve ser de pelo menos R$ {leilao.preco_inicial:.2f}'}), 400
     if produto.preco_desconto and valor >= float(produto.preco_desconto):
-        return jsonify({'message': f'Para pagar R$ {produto.preco_desconto:.2f} ou mais, use o botão Comprar Agora!'}), 400
+        return jsonify({'message': f'Para pagar R$ {float(produto.preco_desconto):.2f} ou mais, use o botão Comprar Agora!'}), 400
 
     lance = Lance(produto_id=produto.id, usuario_id=user.id, valor=valor)
     db.session.add(lance)
@@ -2041,16 +2325,23 @@ def add_bid(product_id):
 
     return jsonify(produto.to_dict()), 201
 
+
 @app.route('/api/auctions', methods=['GET'])
 def list_auctions():
     """Leilões ativos e disponíveis na vitrine."""
+    revs_map = _preload_store_reviews()
     produtos = (
         Produto.query
         .join(Leilao, Leilao.produto_id == Produto.id)
-        .filter(Leilao.ativo.is_(True), Produto.status == 'DISPONIVEL', Produto.pausado.isnot(True))
+        .filter(
+            Leilao.ativo.is_(True),
+            Produto.status == 'DISPONIVEL',
+            Produto.pausado.isnot(True),
+            Produto.quantidade > 0,
+        )
         .all()
     )
-    result = [p.to_dict() for p in produtos]
+    result = [p.to_dict(store_reviews_map=revs_map) for p in produtos if p.leilao_ativo()]
     return jsonify(result), 200
 
 
@@ -2108,8 +2399,11 @@ def toggle_favorite(user, product_id):
 
     if request.method == 'POST':
         if not fav:
-            db.session.add(Favorito(usuario_id=user.id, produto_id=product_id))
-            db.session.commit()
+            try:
+                db.session.add(Favorito(usuario_id=user.id, produto_id=product_id))
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
         status = 'added'
     else:
         if fav:
@@ -2127,12 +2421,14 @@ def toggle_favorite(user, product_id):
 @app.route('/api/profile', methods=['PUT'])
 @require_auth
 def update_profile(user):
-    if request.form.get('name'):
-        user.nome = request.form.get('name').strip()
-    if request.form.get('telefone') is not None:
-        user.telefone = request.form.get('telefone').strip()
-    if request.form.get('cpf') is not None:
-        user.cpf = request.form.get('cpf').strip()
+    src = _json_dict() if request.is_json else request.form
+    new_name = _clean_str(src.get('name'), 100)
+    if new_name:
+        user.nome = new_name
+    if src.get('telefone') is not None:
+        user.telefone = _clean_str(src.get('telefone'), 20)
+    if src.get('cpf') is not None:
+        user.cpf = _clean_str(src.get('cpf'), 20)
 
     # Atualiza foto de perfil se enviada
     file = request.files.get('foto') or request.files.get('photo')
@@ -2153,9 +2449,9 @@ def update_profile(user):
 @app.route('/api/profile', methods=['DELETE'])
 @require_auth
 def delete_profile(user):
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
     password = data.get('password')
-    if not password:
+    if not isinstance(password, str) or not password:
         return jsonify({'message': 'Digite sua senha para confirmar a exclusão'}), 400
 
     if not verify_password(user, password):
@@ -2163,35 +2459,38 @@ def delete_profile(user):
 
     try:
         # Limpa avaliações feitas por este usuário
-        Avaliacao.query.filter_by(usuario_id=user.id).delete()
+        Avaliacao.query.filter_by(usuario_id=user.id).delete(synchronize_session=False)
 
         # Limpa pedidos feitos por este usuário (e devolve estoque de pendentes)
         user_orders = Pedido.query.filter_by(cliente_id=user.id).all()
         for o in user_orders:
-            Avaliacao.query.filter_by(pedido_id=o.id).delete()
+            Avaliacao.query.filter_by(pedido_id=o.id).delete(synchronize_session=False)
             if o.status == 'pendente' and o.produto:
                 o.produto.quantidade += o.quantidade
                 if o.produto.quantidade > 0 and o.produto.status == 'ESGOTADO':
                     o.produto.status = 'DISPONIVEL'
             db.session.delete(o)
+        db.session.flush()
 
-        # Se for comerciante, exclui produtos (e dependências) e loja
-        if is_merchant(user):
-            estabs = Estabelecimento.query.filter_by(usuario_id=user.id).all()
-            for estab in estabs:
-                Avaliacao.query.filter_by(estabelecimento_id=estab.id).delete()
-                for p in list(estab.produtos):
-                    Avaliacao.query.filter_by(produto_id=p.id).delete()
-                    Favorito.query.filter_by(produto_id=p.id).delete()
-                    Lance.query.filter_by(produto_id=p.id).delete()
-                    Leilao.query.filter_by(produto_id=p.id).delete()
-                    Pedido.query.filter_by(produto_id=p.id).delete()
-                    db.session.delete(p)
-                db.session.delete(estab)
+        # Exclui lojas vinculadas a este usuário (independente do cargo atual) e suas dependências
+        estabs = Estabelecimento.query.filter_by(usuario_id=user.id).all()
+        for estab in estabs:
+            Avaliacao.query.filter_by(estabelecimento_id=estab.id).delete(synchronize_session=False)
+            for p in list(estab.produtos):
+                prod_order_ids = [o.id for o in Pedido.query.filter_by(produto_id=p.id).all()]
+                if prod_order_ids:
+                    Avaliacao.query.filter(Avaliacao.pedido_id.in_(prod_order_ids)).delete(synchronize_session=False)
+                Avaliacao.query.filter_by(produto_id=p.id).delete(synchronize_session=False)
+                Favorito.query.filter_by(produto_id=p.id).delete(synchronize_session=False)
+                Lance.query.filter_by(produto_id=p.id).delete(synchronize_session=False)
+                Leilao.query.filter_by(produto_id=p.id).delete(synchronize_session=False)
+                Pedido.query.filter_by(produto_id=p.id).delete(synchronize_session=False)
+                db.session.delete(p)
+            db.session.delete(estab)
 
         # Limpa favoritos e lances vinculados
-        Favorito.query.filter_by(usuario_id=user.id).delete()
-        Lance.query.filter_by(usuario_id=user.id).delete()
+        Favorito.query.filter_by(usuario_id=user.id).delete(synchronize_session=False)
+        Lance.query.filter_by(usuario_id=user.id).delete(synchronize_session=False)
         # Remove usuário
         db.session.delete(user)
         db.session.commit()
@@ -2216,102 +2515,145 @@ def _add_col_if_missing(tables, existing_cols, table, col_name, col_def):
 
 
 def ensure_schema():
-    """Cria tabelas e adiciona colunas faltantes em SQLite/Postgres de forma idempotente."""
+    """Cria tabelas, migra colunas faltantes e serializa boot multi-worker em SQLite/PostgreSQL."""
     with app.app_context():
+        is_postgres = not _database_url.startswith('sqlite:')
+        locked = False
         try:
-            db.create_all()
-        except Exception as e:
-            print("Aviso ao executar db.create_all():", e, flush=True)
+            if is_postgres:
+                try:
+                    db.session.execute(db.text("SELECT pg_advisory_lock(84729104)"))
+                    locked = True
+                except Exception:
+                    db.session.rollback()
 
-        try:
-            from sqlalchemy import inspect
-            inspector = inspect(db.engine)
-            tables = set(inspector.get_table_names())
-            existing_cols = {t: {c['name'] for c in inspector.get_columns(t)} for t in tables}
-
-            migrations = [
-                ('usuario', 'foto', 'VARCHAR(500)'),
-                ('usuario', 'cpf', 'VARCHAR(20)'),
-                ('usuario', 'telefone', 'VARCHAR(20)'),
-                ('usuario', 'criado_em', 'TIMESTAMP'),
-                ('estabelecimento', 'usuario_id', 'INTEGER'),
-                ('estabelecimento', 'categoria', "VARCHAR(80) DEFAULT 'Padaria e Confeitaria'"),
-                ('estabelecimento', 'horario_funcionamento', "VARCHAR(150) DEFAULT 'Seg a Sáb: 08:00 às 20:00'"),
-                ('estabelecimento', 'plano', "VARCHAR(30) DEFAULT 'free'"),
-                ('estabelecimento', 'formas_pagamento', "VARCHAR(200) DEFAULT 'PIX, Cartão de Crédito/Débito e Dinheiro'"),
-                ('estabelecimento', 'notificacoes_ativas', 'BOOLEAN DEFAULT TRUE'),
-                ('produto', 'pausado', 'BOOLEAN DEFAULT FALSE'),
-                ('produto', 'descricao', 'TEXT'),
-                ('produto', 'categoria', 'VARCHAR(80)'),
-                ('produto', 'imagem', 'VARCHAR(500)'),
-                ('produto', 'status', "VARCHAR(20) DEFAULT 'DISPONIVEL'"),
-                ('pedido', 'preco_unitario', 'DOUBLE PRECISION'),
-            ]
-            for table, col_name, col_def in migrations:
-                _add_col_if_missing(tables, existing_cols, table, col_name, col_def)
-
-            # Vincula estabelecimentos órfãos ao primeiro usuário comerciante (ADMIN)
-            admin_user = Usuario.query.filter_by(tipo='ADMIN').first()
-            if admin_user:
-                orphan_estabs = Estabelecimento.query.filter(Estabelecimento.usuario_id.is_(None)).all()
-                for est in orphan_estabs:
-                    est.usuario_id = admin_user.id
-                if orphan_estabs:
-                    db.session.commit()
-                    print(f"Migração: vinculados {len(orphan_estabs)} estabelecimentos ao usuário {admin_user.email}", flush=True)
-        except Exception as e:
-            db.session.rollback()
-            print("Aviso ao rodar migrações leves de schema:", e, flush=True)
-
-        if DEMO_MODE:
             try:
-                has_products = Produto.query.count() > 0
-                has_any_auctions = Leilao.query.count() > 0
-                if not has_products or not has_any_auctions:
-                    # Garante que `from app import ...` em seed_tcc reutilize este módulo quando executado via `python app.py`
-                    if __name__ == '__main__' and 'app' not in sys.modules:
-                        sys.modules['app'] = sys.modules[__name__]
-                    main_mod = sys.modules.get('__main__')
-                    running_seed_as_main = bool(
-                        main_mod and os.path.basename(getattr(main_mod, '__file__', '') or '') == 'seed_tcc.py'
-                    )
-                    seed_mod = sys.modules.get('seed_tcc')
-                    importing_seed = seed_mod is not None and not hasattr(seed_mod, 'seed_tcc')
-                    if not running_seed_as_main and not importing_seed:
-                        try:
-                            from seed_tcc import seed_tcc
-                        except ModuleNotFoundError:
-                            from backend.seed_tcc import seed_tcc
-                        seed_tcc(run_migrations=False)
-                        print("Auto-seed de demonstração executado com sucesso.", flush=True)
-                else:
-                    # Já existem produtos e leilões do TCC: apenas renova o prazo se expiraram, sem apagar dados reais
-                    has_active_auctions = Leilao.query.filter(
-                        Leilao.ativo.is_(True),
-                        Leilao.fim > _utcnow()
-                    ).count() > 0
-                    if not has_active_auctions:
-                        expired_or_inactive = Leilao.query.join(Produto, Leilao.produto_id == Produto.id).filter(
-                            Produto.status == 'DISPONIVEL',
-                            Produto.pausado.isnot(True),
-                            Produto.quantidade > 0,
-                        ).all()
-                        if expired_or_inactive:
-                            new_end = _utcnow() + timedelta(hours=4)
-                            for leilao in expired_or_inactive:
-                                if not leilao.ativo or leilao.fim <= _utcnow():
-                                    leilao.ativo = True
-                                    leilao.fim = new_end
-                            db.session.commit()
+                db.create_all()
             except Exception as e:
                 db.session.rollback()
-                print("Aviso ao executar auto-seed de demonstração:", e, flush=True)
+                print("Aviso ao executar db.create_all():", e, flush=True)
+
+            try:
+                from sqlalchemy import inspect
+                inspector = inspect(db.engine)
+                tables = set(inspector.get_table_names())
+                existing_cols = {t: {c['name'] for c in inspector.get_columns(t)} for t in tables}
+
+                migrations = [
+                    ('usuario', 'foto', 'VARCHAR(500)'),
+                    ('usuario', 'cpf', 'VARCHAR(20)'),
+                    ('usuario', 'telefone', 'VARCHAR(20)'),
+                    ('usuario', 'criado_em', 'TIMESTAMP'),
+                    ('estabelecimento', 'usuario_id', 'INTEGER'),
+                    ('estabelecimento', 'categoria', "VARCHAR(80) DEFAULT 'Padaria e Confeitaria'"),
+                    ('estabelecimento', 'horario_funcionamento', "VARCHAR(150) DEFAULT 'Seg a Sáb: 08:00 às 20:00'"),
+                    ('estabelecimento', 'plano', "VARCHAR(30) DEFAULT 'free'"),
+                    ('estabelecimento', 'formas_pagamento', "VARCHAR(200) DEFAULT 'PIX, Cartão de Crédito, Cartão de Débito, Dinheiro'"),
+                    ('estabelecimento', 'notificacoes_ativas', 'BOOLEAN DEFAULT TRUE'),
+                    ('estabelecimento', 'cep', 'VARCHAR(9)'),
+                    ('estabelecimento', 'cnpj', 'VARCHAR(18)'),
+                    ('estabelecimento', 'email', 'VARCHAR(100)'),
+                    ('estabelecimento', 'telefone', 'VARCHAR(20)'),
+                    ('estabelecimento', 'endereco', 'VARCHAR(200)'),
+                    ('estabelecimento', 'cidade', 'VARCHAR(100)'),
+                    ('estabelecimento', 'estado', 'VARCHAR(2)'),
+                    ('estabelecimento', 'latitude', 'DOUBLE PRECISION'),
+                    ('estabelecimento', 'longitude', 'DOUBLE PRECISION'),
+                    ('produto', 'pausado', 'BOOLEAN DEFAULT FALSE'),
+                    ('produto', 'descricao', 'TEXT'),
+                    ('produto', 'categoria', 'VARCHAR(80)'),
+                    ('produto', 'imagem', 'VARCHAR(500)'),
+                    ('produto', 'status', "VARCHAR(20) DEFAULT 'DISPONIVEL'"),
+                    ('pedido', 'preco_unitario', 'DOUBLE PRECISION'),
+                    ('pedido', 'criado_em', 'TIMESTAMP'),
+                    ('pedido', 'status', "VARCHAR(20) DEFAULT 'pendente'"),
+                    ('leilao', 'intervalo_min', 'INTEGER DEFAULT 15'),
+                    ('leilao', 'ativo', 'BOOLEAN DEFAULT TRUE'),
+                    ('lance', 'data_lance', 'TIMESTAMP'),
+                    ('avaliacao', 'resposta_lojista', 'TEXT'),
+                    ('avaliacao', 'tags', 'VARCHAR(250)'),
+                    ('avaliacao', 'pedido_id', 'INTEGER'),
+                    ('avaliacao', 'autor_nome', "VARCHAR(100) DEFAULT 'Cliente CheapFood'"),
+                    ('avaliacao', 'criado_em', 'TIMESTAMP'),
+                ]
+                for table, col_name, col_def in migrations:
+                    _add_col_if_missing(tables, existing_cols, table, col_name, col_def)
+
+                # Vincula estabelecimentos órfãos ao admin principal (determinístico)
+                admin_user = (
+                    Usuario.query.filter(db.func.lower(Usuario.email) == 'admin@cheapfood.com').first()
+                    or Usuario.query.filter_by(tipo='ADMIN').order_by(Usuario.id.asc()).first()
+                )
+                if admin_user:
+                    orphan_estabs = Estabelecimento.query.filter(Estabelecimento.usuario_id.is_(None)).all()
+                    for est in orphan_estabs:
+                        est.usuario_id = admin_user.id
+                    if orphan_estabs:
+                        db.session.commit()
+                        print(f"Migração: vinculados {len(orphan_estabs)} estabelecimentos ao usuário {admin_user.email}", flush=True)
+            except Exception as e:
+                db.session.rollback()
+                print("Aviso ao rodar migrações leves de schema:", e, flush=True)
+
+            if DEMO_MODE:
+                try:
+                    has_products = Produto.query.count() > 0
+                    has_any_auctions = Leilao.query.count() > 0
+                    if not has_products or not has_any_auctions:
+                        sys.modules.setdefault('app', sys.modules[__name__])
+                        main_mod = sys.modules.get('__main__')
+                        running_seed_as_main = bool(
+                            main_mod and os.path.basename(getattr(main_mod, '__file__', '') or '') == 'seed_tcc.py'
+                        )
+                        importing_seed = any(
+                            (m is not None and not hasattr(m, 'seed_tcc'))
+                            for m in (sys.modules.get('seed_tcc'), sys.modules.get('backend.seed_tcc'))
+                        )
+                        if not running_seed_as_main and not importing_seed:
+                            try:
+                                from seed_tcc import seed_tcc
+                            except ModuleNotFoundError:
+                                from backend.seed_tcc import seed_tcc
+                            seed_tcc(run_migrations=False)
+                            print("Auto-seed de demonstração executado com sucesso.", flush=True)
+                    else:
+                        # Apenas renova o prazo dos leilões que ainda estão ativos (ativo=True) e expiraram, sem reativar resgatados/encerrados
+                        has_active_auctions = Leilao.query.filter(
+                            Leilao.ativo.is_(True),
+                            Leilao.fim > _utcnow()
+                        ).count() > 0
+                        if not has_active_auctions:
+                            expired_active = Leilao.query.join(Produto, Leilao.produto_id == Produto.id).filter(
+                                Leilao.ativo.is_(True),
+                                Leilao.fim <= _utcnow(),
+                                Produto.status == 'DISPONIVEL',
+                                Produto.pausado.isnot(True),
+                                Produto.quantidade > 0,
+                            ).all()
+                            if expired_active:
+                                new_end = _utcnow() + timedelta(hours=4)
+                                for leilao in expired_active:
+                                    leilao.fim = new_end
+                                db.session.commit()
+                except Exception as e:
+                    db.session.rollback()
+                    print("Aviso ao executar auto-seed de demonstração:", e, flush=True)
+        finally:
+            if locked:
+                try:
+                    db.session.execute(db.text("SELECT pg_advisory_unlock(84729104)"))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+            # Libera conexões abertas antes de eventual fork do Gunicorn (--preload)
+            db.session.remove()
+            db.engine.dispose()
 
 
 ensure_schema()
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = _env_int('PORT', 5000)
     print(f"\n=== CheapFood Backend rodando na porta {port} (debug={DEBUG}) ===")
     app.run(host='0.0.0.0', debug=DEBUG, port=port)
 

@@ -16,5 +16,11 @@ services:
         value: "True"
       - key: SECRET_KEY
         generateValue: true
+      - key: FRONTEND_URL
+        value: "https://cheap-food-project.vercel.app"
+      - key: CORS_ORIGINS
+        value: "https://cheap-food-project.vercel.app,https://cheap-food.altvia.cloud"
+      - key: DATABASE_URL
+        sync: false
       - key: GEMINI_API_KEY
         sync: false

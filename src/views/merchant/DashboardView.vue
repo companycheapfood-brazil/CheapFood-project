@@ -5,6 +5,8 @@ import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
 import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { useMerchantStore } from "@/stores/useMerchantStore";
+import { useToastStore } from "@/stores/useToastStore";
+import { formatBRL } from "@/composables/useAuctionClock";
 import { storeToRefs } from "pinia";
 
 const route = useRoute();
@@ -12,6 +14,7 @@ const router = useRouter();
 const showEmptyState = computed(() => route.query.new === "1");
 
 const merchantStore = useMerchantStore();
+const toast = useToastStore();
 const { stats, storeInfo } = storeToRefs(merchantStore);
 
 const activePeriod = ref("7days");
@@ -48,8 +51,12 @@ function startReply(rev: any) {
 
 async function saveReply(revId: number) {
   if (isSavingReply.value) return;
+  if (!replyText.value.trim()) {
+    toast.addToast("Digite uma resposta antes de enviar.", "error");
+    return;
+  }
   isSavingReply.value = true;
-  const ok = await merchantStore.replyToReview(revId, replyText.value);
+  const ok = await merchantStore.replyToReview(revId, replyText.value.trim());
   isSavingReply.value = false;
   if (ok) {
     replyingReviewId.value = null;
@@ -73,8 +80,23 @@ onMounted(async () => {
 });
 
 const maxSales = computed(() =>
-  Math.max(1, ...stats.value.dailySales.map((d) => d.value)),
+  Math.max(1, ...stats.value.dailySales.map((d) => Number(d.value) || 0)),
 );
+
+const averageTicket = computed(() => {
+  const count = Number(stats.value.completedOrdersCount || 0);
+  if (count <= 0) return 0;
+  return Number(stats.value.revenueRecovered || 0) / count;
+});
+
+const isNegativeGrowth = computed(() =>
+  String(stats.value.growth ?? "").trim().startsWith("-"),
+);
+
+const isProPlan = computed(() => {
+  const p = storeInfo.value.plan || stats.value.plan;
+  return p === "monthly" || p === "annual";
+});
 
 function openPinModal() {
   pinInput.value = "";
@@ -83,7 +105,7 @@ function openPinModal() {
 }
 
 async function handleLookupPin() {
-  if (pinInput.value.trim().length < 3) return;
+  if (pinInput.value.trim().length < 3 || isValidatingPin.value) return;
   isValidatingPin.value = true;
   pinOrderResult.value = await merchantStore.validateOrderPin(
     pinInput.value.trim(),
@@ -93,16 +115,16 @@ async function handleLookupPin() {
 }
 
 async function handleConfirmPinPickup() {
-  if (!pinOrderResult.value) return;
+  if (!pinOrderResult.value || isValidatingPin.value) return;
   isValidatingPin.value = true;
   const updated = await merchantStore.validateOrderPin(
     pinOrderResult.value.code,
     true,
+    activePeriod.value,
   );
   isValidatingPin.value = false;
   if (updated) {
     pinOrderResult.value = updated;
-    await merchantStore.fetchDashboardStats(activePeriod.value);
   }
 }
 
@@ -165,7 +187,7 @@ function printReport() {
         </div>
         <div class="stat-card highlight" :class="{ skeleton: isLoading }">
           <p class="stat-value" v-if="!isLoading">
-            R$ {{ stats.revenueRecovered.toFixed(2).replace(".", ",") }}
+            {{ formatBRL(stats.revenueRecovered) }}
           </p>
           <p class="stat-label" v-if="!isLoading">Receita recuperada</p>
         </div>
@@ -179,25 +201,28 @@ function printReport() {
       <div class="stats-row extra-stats-three">
         <div class="stat-card" :class="{ skeleton: isLoading }">
           <p class="stat-value" v-if="!isLoading">
-            R$
-            {{
-              (stats.revenueRecovered / Math.max(1, stats.itemsSaved || stats.dailySales.length || 1))
-                .toFixed(2)
-                .replace(".", ",")
-            }}
+            {{ formatBRL(averageTicket) }}
           </p>
           <p class="stat-label" v-if="!isLoading">Ticket Médio</p>
         </div>
         <div class="stat-card" :class="{ skeleton: isLoading }">
-          <p class="stat-value growth-positive" v-if="!isLoading">
-            {{ stats.growth || "+18%" }}
+          <p
+            class="stat-value"
+            :class="isNegativeGrowth ? 'growth-negative' : 'growth-positive'"
+            v-if="!isLoading"
+          >
+            {{ stats.growth || "0%" }}
           </p>
           <p class="stat-label" v-if="!isLoading">Crescimento</p>
         </div>
         <div class="stat-card" :class="{ skeleton: isLoading }">
           <p class="stat-value rating-gold" v-if="!isLoading" style="display: inline-flex; align-items: center; gap: 4px;">
             <SvgIcon name="star-filled" :size="15" />
-            <span>{{ Number(stats.ratingAverage || 5).toFixed(1).replace(".", ",") }}</span>
+            <span>{{
+              stats.ratingCount > 0
+                ? Number(stats.ratingAverage).toFixed(1).replace(".", ",")
+                : "--"
+            }}</span>
           </p>
           <p class="stat-label" v-if="!isLoading">
             Avaliação ({{ stats.ratingCount || 0 }})
@@ -274,14 +299,16 @@ function printReport() {
                   : Math.round(d.value)
               }}</span>
               <span class="bar-value zero" v-else>-</span>
-              <div
-                class="bar"
-                :class="{ peak: d.value === maxSales && d.value > 0 }"
-                :style="{
-                  height: `${(d.value / maxSales) * 100}%`,
-                  minHeight: d.value > 0 ? '16px' : '6px',
-                }"
-              ></div>
+              <div class="bar-track">
+                <div
+                  class="bar"
+                  :class="{ peak: d.value === maxSales && d.value > 0 }"
+                  :style="{
+                    height: `${Math.min(100, (d.value / maxSales) * 100)}%`,
+                    minHeight: d.value > 0 ? '14px' : '6px',
+                  }"
+                ></div>
+              </div>
               <span
                 class="bar-label"
                 :class="{ today: i === stats.dailySales.length - 1 }"
@@ -373,6 +400,7 @@ function printReport() {
       </section>
 
       <div
+        v-if="stats.expiringSoon > 0"
         class="alert-banner"
         @click="router.push('/comerciante/produtos')"
         style="cursor: pointer"
@@ -472,11 +500,14 @@ function printReport() {
               <p class="pin-date">Reserva: {{ pinOrderResult.createdAt }}</p>
             </div>
             <span class="pin-status" :class="pinOrderResult.status" style="display: inline-flex; align-items: center; gap: 4px;">
-              <SvgIcon v-if="pinOrderResult.status !== 'pendente'" name="check-circle" :size="12" />
+              <SvgIcon v-if="pinOrderResult.status === 'retirado'" name="check-circle" :size="12" />
+              <SvgIcon v-else-if="pinOrderResult.status === 'expirado'" name="x" :size="12" />
               <span>{{
                 pinOrderResult.status === "pendente"
                   ? "Aguardando Retirada"
-                  : "Já Retirado"
+                  : pinOrderResult.status === "retirado"
+                    ? "Já Retirado"
+                    : "Cancelado / Expirado"
               }}</span>
             </span>
           </div>
@@ -488,13 +519,13 @@ function printReport() {
               class="pin-item-line"
             >
               <span>{{ item.quantity }}x {{ item.productName }}</span>
-              <strong>R$ {{ item.total.toFixed(2).replace(".", ",") }}</strong>
+              <strong>{{ formatBRL(item.total) }}</strong>
             </div>
           </div>
 
           <div class="pin-total-row">
             <span>Total a receber / validar</span>
-            <strong>R$ {{ pinOrderResult.total.toFixed(2).replace(".", ",") }}</strong>
+            <strong>{{ formatBRL(pinOrderResult.total) }}</strong>
           </div>
 
           <button
@@ -524,11 +555,13 @@ function printReport() {
       @click.self="showReportModal = false"
     >
       <div class="modal-card report-modal">
-        <div class="report-badge">RELATÓRIO GERENCIAL CHEAPFOOD PRO</div>
-        <h3 class="modal-title">{{ storeInfo.name }}</h3>
+        <div class="report-badge">
+          {{ isProPlan ? "RELATÓRIO GERENCIAL CHEAPFOOD PRO" : "RELATÓRIO GERENCIAL CHEAPFOOD" }}
+        </div>
+        <h3 class="modal-title">{{ storeInfo.name || stats.storeName || "Estabelecimento" }}</h3>
         <p class="modal-desc">
-          Período analisado: <strong>{{ subtitleText }}</strong> · CNPJ:
-          {{ storeInfo.cnpj }}
+          Período analisado: <strong>{{ subtitleText }}</strong>
+          <template v-if="storeInfo.cnpj"> · CNPJ: {{ storeInfo.cnpj }}</template>
         </p>
 
         <div class="report-table">
@@ -659,6 +692,10 @@ function printReport() {
 
 .stat-value.growth-positive {
   color: var(--mc-green, #2a9d8f);
+}
+
+.stat-value.growth-negative {
+  color: var(--mc-danger, #d92d3f);
 }
 
 .stat-label {
@@ -888,6 +925,15 @@ function printReport() {
   font-weight: 500;
 }
 
+.bar-track {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
 .bar {
   width: 100%;
   max-width: 36px;
@@ -1017,7 +1063,7 @@ function printReport() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2000;
   padding: 16px;
 }
 
@@ -1117,6 +1163,11 @@ function printReport() {
 .pin-status.retirado {
   background: #e6f6ec;
   color: #1f8a4c;
+}
+
+.pin-status.expirado {
+  background: var(--mc-danger-soft);
+  color: var(--mc-danger);
 }
 
 .pin-items {
@@ -1469,6 +1520,26 @@ function printReport() {
 
   .modal-footer-btns.two-cols {
     flex-wrap: wrap;
+  }
+}
+
+@media print {
+  .screen > :not(.modal-overlay),
+  .modal-footer-btns {
+    display: none !important;
+  }
+
+  .modal-overlay {
+    position: static !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+  }
+
+  .modal-card {
+    box-shadow: none !important;
+    max-width: 100% !important;
+    border: 1px solid #e2e8f0 !important;
   }
 }
 </style>

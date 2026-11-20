@@ -5,12 +5,17 @@ import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
 import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
 import { useMerchantStore } from "@/stores/useMerchantStore";
 import { useToastStore } from "@/stores/useToastStore";
+import { useCartStore } from "@/stores/useCartStore";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
+import AuthService from "@/services/auth.service";
 import { storeToRefs } from "pinia";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 
 const router = useRouter();
 const merchantStore = useMerchantStore();
 const toast = useToastStore();
+const cartStore = useCartStore();
+const favoritesStore = useFavoritesStore();
 const { storeInfo } = storeToRefs(merchantStore);
 
 type ActiveModal =
@@ -19,7 +24,8 @@ type ActiveModal =
   | "hours"
   | "payments"
   | "notifications"
-  | "help";
+  | "help"
+  | "confirm-reset";
 
 const activeModal = ref<ActiveModal>(null);
 const isSaving = ref(false);
@@ -29,6 +35,9 @@ const storeForm = ref({
   category: "",
   phone: "",
   address: "",
+  city: "",
+  state: "",
+  cep: "",
   cnpj: "",
 });
 
@@ -45,6 +54,30 @@ const selectedPayments = ref<string[]>([]);
 
 const notificationsEnabled = ref(true);
 
+function normalizeStoredPayments(raw?: string): string[] {
+  const source = raw || "PIX, Cartão de Crédito, Cartão de Débito, Dinheiro na Retirada";
+  const tokens = source
+    .replace(/\s+e\s+/gi, ",")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const mapped = new Set<string>();
+  for (const t of tokens) {
+    const low = t.toLowerCase();
+    if (low === "pix") mapped.add("PIX");
+    else if (low.includes("crédito/débito") || low.includes("credito/debito") || low === "cartão" || low === "cartao") {
+      mapped.add("Cartão de Crédito");
+      mapped.add("Cartão de Débito");
+    } else if (low.includes("crédito") || low.includes("credito")) mapped.add("Cartão de Crédito");
+    else if (low.includes("débito") || low.includes("debito")) mapped.add("Cartão de Débito");
+    else if (low.includes("vale") || low.includes("vr")) mapped.add("Vale-Refeição (VR / Alelo / Sodexo)");
+    else if (low.includes("dinheiro")) mapped.add("Dinheiro na Retirada");
+    else if (availablePaymentMethods.includes(t)) mapped.add(t);
+  }
+  return Array.from(mapped);
+}
+
 onMounted(async () => {
   await merchantStore.fetchStoreInfo();
   syncForms();
@@ -52,18 +85,17 @@ onMounted(async () => {
 
 function syncForms() {
   storeForm.value = {
-    name: storeInfo.value.name || "Padaria Central",
-    category: storeInfo.value.category || "Padaria e Confeitaria",
-    phone: storeInfo.value.phone || "(17) 99999-0000",
-    address: storeInfo.value.address || "Av. Bady Bassitt, 1200 - Centro",
-    cnpj: storeInfo.value.cnpj || "12.345.678/0001-99",
+    name: storeInfo.value.name || "",
+    category: storeInfo.value.category || "",
+    phone: storeInfo.value.phone || "",
+    address: storeInfo.value.address || "",
+    city: storeInfo.value.city || "",
+    state: storeInfo.value.state || "",
+    cep: storeInfo.value.cep || "",
+    cnpj: storeInfo.value.cnpj || "",
   };
-  hoursForm.value =
-    storeInfo.value.openingHours || "Seg a Sáb: 07h às 20h · Dom: 07h às 13h";
-  selectedPayments.value = (storeInfo.value.paymentMethods || "PIX,Cartão,Dinheiro")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  hoursForm.value = storeInfo.value.openingHours || "";
+  selectedPayments.value = normalizeStoredPayments(storeInfo.value.paymentMethods);
   notificationsEnabled.value = storeInfo.value.notificationsEnabled ?? true;
 }
 
@@ -82,38 +114,48 @@ function togglePaymentMethod(method: string) {
 }
 
 async function saveStoreData() {
+  if (isSaving.value) return;
+  if (!storeForm.value.name.trim()) {
+    toast.addToast("Informe o nome fantasia da loja.", "error");
+    return;
+  }
   isSaving.value = true;
   const ok = await merchantStore.updateStoreInfo({
-    name: storeForm.value.name,
-    category: storeForm.value.category,
-    phone: storeForm.value.phone,
-    address: storeForm.value.address,
-    cnpj: storeForm.value.cnpj,
+    name: storeForm.value.name.trim().slice(0, 150),
+    category: storeForm.value.category.trim().slice(0, 80),
+    phone: storeForm.value.phone.trim().slice(0, 20),
+    address: storeForm.value.address.trim().slice(0, 200),
+    city: storeForm.value.city.trim().slice(0, 100),
+    state: storeForm.value.state.trim().toUpperCase().slice(0, 2),
+    cep: storeForm.value.cep.trim().slice(0, 9),
+    cnpj: storeForm.value.cnpj.trim().slice(0, 18),
   });
   isSaving.value = false;
   if (ok) {
     toast.addToast("Dados da loja salvos com sucesso!", "success");
     activeModal.value = null;
   } else {
-    toast.addToast("Erro ao salvar dados da loja", "error");
+    toast.addToast(merchantStore.lastError || "Erro ao salvar dados da loja", "error");
   }
 }
 
 async function saveHours() {
+  if (isSaving.value) return;
   isSaving.value = true;
   const ok = await merchantStore.updateStoreInfo({
-    openingHours: hoursForm.value,
+    openingHours: hoursForm.value.trim().slice(0, 150),
   });
   isSaving.value = false;
   if (ok) {
     toast.addToast("Horário de funcionamento atualizado!", "success");
     activeModal.value = null;
   } else {
-    toast.addToast("Erro ao salvar horário", "error");
+    toast.addToast(merchantStore.lastError || "Erro ao salvar horário", "error");
   }
 }
 
 async function savePayments() {
+  if (isSaving.value) return;
   if (selectedPayments.value.length === 0) {
     toast.addToast("Selecione pelo menos uma forma de pagamento", "error");
     return;
@@ -127,11 +169,12 @@ async function savePayments() {
     toast.addToast("Formas de pagamento atualizadas!", "success");
     activeModal.value = null;
   } else {
-    toast.addToast("Erro ao salvar formas de pagamento", "error");
+    toast.addToast(merchantStore.lastError || "Erro ao salvar formas de pagamento", "error");
   }
 }
 
 async function saveNotifications() {
+  if (isSaving.value) return;
   isSaving.value = true;
   const ok = await merchantStore.updateStoreInfo({
     notificationsEnabled: notificationsEnabled.value,
@@ -141,7 +184,7 @@ async function saveNotifications() {
     toast.addToast("Preferências de notificação salvas!", "success");
     activeModal.value = null;
   } else {
-    toast.addToast("Erro ao salvar notificações", "error");
+    toast.addToast(merchantStore.lastError || "Erro ao salvar notificações", "error");
   }
 }
 
@@ -152,6 +195,7 @@ const planLabel = computed(() => {
 });
 
 async function handleResetDemo() {
+  if (isSaving.value) return;
   isSaving.value = true;
   await merchantStore.resetDemoData();
   syncForms();
@@ -159,9 +203,11 @@ async function handleResetDemo() {
   activeModal.value = null;
 }
 
-const logout = () => {
-  localStorage.removeItem("user");
-  localStorage.removeItem("cf_token");
+const logout = async () => {
+  cartStore.resetSession();
+  favoritesStore.resetState();
+  merchantStore.resetState();
+  await AuthService.logout();
   router.push("/start");
 };
 </script>
@@ -305,7 +351,7 @@ const logout = () => {
       </div>
 
       <div class="menu-card">
-        <button class="menu-row" @click="handleResetDemo" :disabled="isSaving">
+        <button class="menu-row" @click="openModal('confirm-reset')" :disabled="isSaving">
           <span class="menu-item-content">
             <span class="menu-icon">
               <SvgIcon name="repeat" :size="18" />
@@ -337,36 +383,50 @@ const logout = () => {
     <div
       v-if="activeModal === 'store'"
       class="modal-overlay"
-      @click.self="activeModal = null"
+      @click.self="!isSaving && (activeModal = null)"
     >
       <div class="modal-card">
         <h3 class="modal-title">Editar Dados da Loja</h3>
         <div class="form-fields">
           <label class="field">
             <span>Nome Fantasia</span>
-            <input v-model="storeForm.name" type="text" />
+            <input v-model="storeForm.name" type="text" maxlength="150" placeholder="Nome da loja" />
           </label>
           <label class="field">
             <span>Ramo / Categoria</span>
-            <input v-model="storeForm.category" type="text" />
+            <input v-model="storeForm.category" type="text" maxlength="80" placeholder="Ex: Padaria e Confeitaria" />
           </label>
           <label class="field">
             <span>Endereço de Retirada</span>
-            <input v-model="storeForm.address" type="text" />
+            <input v-model="storeForm.address" type="text" maxlength="200" placeholder="Rua, número e bairro" />
           </label>
           <div class="row-2">
             <label class="field">
+              <span>Cidade</span>
+              <input v-model="storeForm.city" type="text" maxlength="100" placeholder="Marília" />
+            </label>
+            <label class="field" style="max-width: 72px">
+              <span>UF</span>
+              <input v-model="storeForm.state" type="text" maxlength="2" placeholder="SP" />
+            </label>
+            <label class="field" style="max-width: 110px">
+              <span>CEP</span>
+              <input v-model="storeForm.cep" type="text" maxlength="9" placeholder="17500-010" />
+            </label>
+          </div>
+          <div class="row-2">
+            <label class="field">
               <span>Telefone</span>
-              <input v-model="storeForm.phone" type="text" />
+              <input v-model="storeForm.phone" type="text" maxlength="20" placeholder="(00) 00000-0000" />
             </label>
             <label class="field">
               <span>CNPJ</span>
-              <input v-model="storeForm.cnpj" type="text" />
+              <input v-model="storeForm.cnpj" type="text" maxlength="18" placeholder="00.000.000/0001-00" />
             </label>
           </div>
         </div>
         <div class="modal-actions">
-          <button class="btn-cancel" @click="activeModal = null">Cancelar</button>
+          <button class="btn-cancel" :disabled="isSaving" @click="activeModal = null">Cancelar</button>
           <button class="btn-save" :disabled="isSaving" @click="saveStoreData">
             {{ isSaving ? "Salvando..." : "Salvar" }}
           </button>
@@ -378,7 +438,7 @@ const logout = () => {
     <div
       v-if="activeModal === 'hours'"
       class="modal-overlay"
-      @click.self="activeModal = null"
+      @click.self="!isSaving && (activeModal = null)"
     >
       <div class="modal-card">
         <h3 class="modal-title">Horário de Funcionamento</h3>
@@ -390,6 +450,7 @@ const logout = () => {
           <input
             v-model="hoursForm"
             type="text"
+            maxlength="150"
             placeholder="Ex: Seg a Sáb: 07h às 20h"
           />
         </label>
@@ -510,6 +571,28 @@ const logout = () => {
         </div>
         <div class="modal-actions" style="margin-top: 16px">
           <button class="btn-save" @click="activeModal = null">Entendi</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: CONFIRMAR RESTAURAÇÃO DEMO -->
+    <div
+      v-if="activeModal === 'confirm-reset'"
+      class="modal-overlay"
+      @click.self="!isSaving && (activeModal = null)"
+    >
+      <div class="modal-card">
+        <h3 class="modal-title">Restaurar cenário inicial?</h3>
+        <p class="modal-desc">
+          Esta ação substituirá produtos, leilões, pedidos e avaliações atuais pelos 12 itens padrão da apresentação. Deseja continuar?
+        </p>
+        <div class="modal-actions">
+          <button class="btn-cancel" :disabled="isSaving" @click="activeModal = null">
+            Cancelar
+          </button>
+          <button class="btn-save" :disabled="isSaving" @click="handleResetDemo">
+            {{ isSaving ? "Restaurando..." : "Confirmar restauração" }}
+          </button>
         </div>
       </div>
     </div>
@@ -678,7 +761,7 @@ const logout = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2000;
   padding: 16px;
 }
 

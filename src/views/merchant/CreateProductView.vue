@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
 import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
-import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { useMerchantStore } from "@/stores/useMerchantStore";
 import { useToastStore } from "@/stores/useToastStore";
 import { authHeaders, handleUnauthorized } from "@/utils/auth";
@@ -43,22 +42,49 @@ const auctionDurationUnit = ref<string>("hours");
 const imageFile = ref<File | null>(null);
 const previewUrl = ref<string | null>(null);
 const isAnalyzing = ref(false);
+const isPublishing = ref(false);
+const isNormalizingImage = ref(false);
+let activeBlobUrl: string | null = null;
+
+function revokeActiveBlob() {
+  if (activeBlobUrl) {
+    URL.revokeObjectURL(activeBlobUrl);
+    activeBlobUrl = null;
+  }
+}
+
+onUnmounted(() => {
+  revokeActiveBlob();
+});
+
+function parseAiNumber(val: unknown): number | null {
+  if (val === undefined || val === null || val === "") return null;
+  const normalized = typeof val === "string" ? val.replace(",", ".").replace(/[^0-9.]/g, "") : val;
+  const num = Number(normalized);
+  return Number.isFinite(num) && num > 0 ? Math.round(num * 100) / 100 : null;
+}
 
 async function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  if (target.files && target.files.length > 0) {
-    const rawFile = target.files[0];
-    if (rawFile) {
-      previewUrl.value = URL.createObjectURL(rawFile);
-      const normalized = await normalizeImageFile(rawFile);
-      imageFile.value = normalized;
-    }
+  const rawFile = target.files?.[0];
+  if (!rawFile) return;
+
+  isNormalizingImage.value = true;
+  try {
+    revokeActiveBlob();
+    activeBlobUrl = URL.createObjectURL(rawFile);
+    previewUrl.value = activeBlobUrl;
+    imageFile.value = await normalizeImageFile(rawFile);
+  } catch {
+    toastStore.addToast("Não foi possível processar esta imagem.", "error");
+  } finally {
+    isNormalizingImage.value = false;
   }
 }
 
 async function analyzeImage() {
-  if (!imageFile.value) {
-    toastStore.addToast("Selecione uma imagem primeiro", "error");
+  if (!imageFile.value || isAnalyzing.value || isNormalizingImage.value) {
+    if (!imageFile.value) toastStore.addToast("Selecione uma imagem primeiro", "error");
     return;
   }
 
@@ -85,23 +111,25 @@ async function analyzeImage() {
     if (!res.ok) throw new Error(data.message || "Falha ao analisar a imagem");
 
     // Autopreenchimento inteligente completo (sempre sobrescreve ao analisar nova imagem)
-    if (data.nome) name.value = data.nome;
+    if (data.nome) name.value = String(data.nome).slice(0, 150);
     if (data.categoria && categories.includes(data.categoria)) {
       category.value = data.categoria;
     } else if (data.categoria) {
       category.value = "Outros";
     }
-    if (data.data_validade) validity.value = data.data_validade;
-    if (data.descricao) description.value = data.descricao;
-    if (data.preco_original !== undefined && data.preco_original !== null)
-      originalPrice.value = Number(data.preco_original);
-    if (data.preco_desconto !== undefined && data.preco_desconto !== null)
-      promoPrice.value = Number(data.preco_desconto);
-    if (!quantity.value) quantity.value = 10;
+    if (data.data_validade && /^\d{4}-\d{2}-\d{2}$/.test(String(data.data_validade))) {
+      validity.value = String(data.data_validade);
+    }
+    if (data.descricao) description.value = String(data.descricao);
+    const parsedOrig = parseAiNumber(data.preco_original);
+    const parsedPromo = parseAiNumber(data.preco_desconto);
+    if (parsedOrig !== null) originalPrice.value = parsedOrig;
+    if (parsedPromo !== null) promoPrice.value = parsedPromo;
+    if (!quantity.value || quantity.value <= 0) quantity.value = 10;
 
     if (data.aiProvider === "fallback") {
       toastStore.addToast(
-        "Sugestão padrão aplicada (configure GEMINI_API_KEY no Render para reconhecimento visual completo).",
+        "Sugestão automática aplicada. Revise os dados antes de publicar.",
         "info",
       );
     } else {
@@ -119,35 +147,82 @@ async function analyzeImage() {
 }
 
 const discountPercent = computed(() => {
-  if (!originalPrice.value || !promoPrice.value || originalPrice.value <= 0)
+  const orig = Number(originalPrice.value);
+  const promo = Number(promoPrice.value);
+  if (!Number.isFinite(orig) || !Number.isFinite(promo) || orig <= 0 || promo <= 0)
     return 0;
-  const pct =
-    ((originalPrice.value - promoPrice.value) / originalPrice.value) * 100;
+  const pct = ((orig - promo) / orig) * 100;
   return Math.max(0, Math.round(pct));
 });
 
-const canPublish = computed(
-  () =>
+const canPublish = computed(() => {
+  const orig = Number(originalPrice.value);
+  const promo = Number(promoPrice.value);
+  const qty = Number(quantity.value);
+  const baseValid =
     name.value.trim() !== "" &&
     category.value !== "" &&
     validity.value !== "" &&
-    !!originalPrice.value &&
-    !!promoPrice.value &&
-    !!quantity.value &&
-    (!isAuction.value || (!!auctionStartPrice.value && auctionDurationValue.value > 0)),
-);
+    Number.isFinite(orig) &&
+    orig > 0 &&
+    Number.isFinite(promo) &&
+    promo > 0 &&
+    promo <= orig &&
+    Number.isFinite(qty) &&
+    qty >= 1;
+
+  if (!baseValid) return false;
+  if (!isAuction.value) return true;
+
+  const start = Number(auctionStartPrice.value);
+  const dur = Number(auctionDurationValue.value);
+  return Number.isFinite(start) && start > 0 && start < promo && Number.isFinite(dur) && dur >= 1;
+});
 
 async function publish() {
-  if (!canPublish.value) return;
+  if (isPublishing.value || isNormalizingImage.value) return;
+  const orig = Number(originalPrice.value);
+  const promo = Number(promoPrice.value);
+  const qty = Math.floor(Number(quantity.value));
 
+  if (!name.value.trim() || !category.value || !validity.value) {
+    toastStore.addToast("Preencha nome, categoria e validade.", "error");
+    return;
+  }
+  if (!Number.isFinite(orig) || orig <= 0 || !Number.isFinite(promo) || promo <= 0) {
+    toastStore.addToast("Informe preços válidos maiores que zero.", "error");
+    return;
+  }
+  if (promo > orig) {
+    toastStore.addToast("O preço promocional não pode ser maior que o preço original.", "error");
+    return;
+  }
+  if (!Number.isFinite(qty) || qty < 1) {
+    toastStore.addToast("Informe uma quantidade disponível de pelo menos 1 unidade.", "error");
+    return;
+  }
+  if (isAuction.value) {
+    const start = Number(auctionStartPrice.value);
+    const dur = Math.floor(Number(auctionDurationValue.value));
+    if (!Number.isFinite(start) || start <= 0 || start >= promo) {
+      toastStore.addToast("O lance inicial deve ser maior que zero e menor que o preço de compra imediata.", "error");
+      return;
+    }
+    if (!Number.isFinite(dur) || dur < 1) {
+      toastStore.addToast("Informe uma duração válida para o leilão.", "error");
+      return;
+    }
+  }
+
+  isPublishing.value = true;
   const formData = new FormData();
-  formData.append("nome", name.value.trim());
+  formData.append("nome", name.value.trim().slice(0, 150));
   formData.append("categoria", category.value);
-  formData.append("descricao", description.value);
+  formData.append("descricao", description.value.trim());
   formData.append("data_validade", validity.value);
-  formData.append("preco_original", originalPrice.value!.toString());
-  formData.append("preco_desconto", promoPrice.value!.toString());
-  formData.append("quantidade", quantity.value!.toString());
+  formData.append("preco_original", orig.toString());
+  formData.append("preco_desconto", promo.toString());
+  formData.append("quantidade", qty.toString());
 
   if (imageFile.value) {
     formData.append("imagem", imageFile.value);
@@ -155,15 +230,16 @@ async function publish() {
 
   if (isAuction.value) {
     formData.append("modo", "LEILAO");
-    formData.append("preco_inicial", auctionStartPrice.value!.toString()); 
-    formData.append("preco_minimo", promoPrice.value!.toString()); // Buy Now price
+    formData.append("preco_inicial", Number(auctionStartPrice.value).toString());
+    formData.append("preco_minimo", promo.toString());
     const endDate = new Date();
-    if (auctionDurationUnit.value === 'minutes') {
-      endDate.setMinutes(endDate.getMinutes() + auctionDurationValue.value);
-    } else if (auctionDurationUnit.value === 'hours') {
-      endDate.setHours(endDate.getHours() + auctionDurationValue.value);
-    } else if (auctionDurationUnit.value === 'days') {
-      endDate.setDate(endDate.getDate() + auctionDurationValue.value);
+    const dur = Math.floor(Number(auctionDurationValue.value));
+    if (auctionDurationUnit.value === "minutes") {
+      endDate.setMinutes(endDate.getMinutes() + dur);
+    } else if (auctionDurationUnit.value === "hours") {
+      endDate.setHours(endDate.getHours() + dur);
+    } else if (auctionDurationUnit.value === "days") {
+      endDate.setDate(endDate.getDate() + dur);
     }
     formData.append("data_fim_leilao", endDate.toISOString());
   } else {
@@ -181,35 +257,37 @@ async function publish() {
 
     if (handleUnauthorized(response.status)) return;
 
+    const data = await response.json().catch(() => ({}));
     if (response.ok) {
-      const data = await response.json();
-
       const newProduct: MerchantProduct = {
-        id: data.id,
+        id: String(data.id),
         name: data.name,
         category: data.category,
         icon: data.icon,
-        originalPrice: data.originalPrice,
-        promoPrice: data.price,
-        quantityAvailable: data.quantity,
+        image: data.image || data.icon,
+        originalPrice: Number(data.originalPrice ?? orig),
+        promoPrice: Number(data.price ?? promo),
+        quantityAvailable: Number(data.quantity ?? qty),
         reservedCount: 0,
         validity: data.validity,
-        expiresLabel: data.expiresLabel,
+        expiresLabel: data.expiresLabel || data.expires_in || "",
         status: "ativo",
         paused: false,
+        auction: data.auction || null,
       };
 
-      toastStore.addToast("Produto cadastrado com sucesso!", "success");
       addProduct(newProduct);
+      await merchantStore.fetchProducts();
+      toastStore.addToast("Produto cadastrado com sucesso!", "success");
       router.push("/comerciante/produtos");
     } else {
-      const errText = await response.text();
-      console.error("Erro ao cadastrar produto:", errText);
-      toastStore.addToast("Erro ao cadastrar produto", "error");
+      toastStore.addToast(data.message || "Erro ao cadastrar produto", "error");
     }
   } catch (err) {
     console.error("Erro na requisição", err);
     toastStore.addToast("Erro de conexão com o servidor", "error");
+  } finally {
+    isPublishing.value = false;
   }
 }
 </script>
@@ -228,6 +306,7 @@ async function publish() {
             <input
               v-model="name"
               type="text"
+              maxlength="150"
               placeholder="Ex: Leite Integral 1L"
             />
           </label>
@@ -274,12 +353,12 @@ async function publish() {
 
           <button
             type="button"
-            v-if="imageFile"
+            v-if="imageFile || isNormalizingImage"
             class="ai-magic-btn"
             @click="analyzeImage"
-            :disabled="isAnalyzing"
+            :disabled="isAnalyzing || isNormalizingImage"
           >
-            <span v-if="isAnalyzing" class="spinner"></span>
+            <span v-if="isAnalyzing || isNormalizingImage" class="spinner"></span>
             <svg
               v-else
               xmlns="http://www.w3.org/2000/svg"
@@ -301,9 +380,11 @@ async function publish() {
               <path d="M17 19h4" />
             </svg>
             {{
-              isAnalyzing
-                ? "A IA está analisando a foto..."
-                : "Preencher com Inteligência Artificial"
+              isNormalizingImage
+                ? "Preparando imagem..."
+                : isAnalyzing
+                  ? "A IA está analisando a foto..."
+                  : "Preencher com Inteligência Artificial"
             }}
           </button>
         </div>
@@ -352,11 +433,11 @@ async function publish() {
             </label>
 
             <label class="field half">
-              <span class="field-label">{{ isAuction ? 'Preço de Compra Imediata' : 'Desconto (R$)' }}</span>
+              <span class="field-label">{{ isAuction ? 'Preço de Compra Imediata (R$)' : 'Preço Promocional (R$)' }}</span>
               <input
                 v-model.number="promoPrice"
                 type="number"
-                min="0"
+                min="0.01"
                 step="0.01"
                 placeholder="2,49"
               />
@@ -368,7 +449,7 @@ async function publish() {
             <input
               v-model.number="auctionStartPrice"
               type="number"
-              min="0"
+              min="0.01"
               step="0.01"
               placeholder="1,99"
             />
@@ -379,7 +460,7 @@ async function publish() {
             <input
               v-model.number="quantity"
               type="number"
-              min="0"
+              min="1"
               step="1"
               placeholder="10"
             />
@@ -391,8 +472,12 @@ async function publish() {
           </div>
         </div>
 
-        <button type="submit" class="publish-btn" :disabled="!canPublish">
-          Publicar Oferta
+        <button
+          type="submit"
+          class="publish-btn"
+          :disabled="!canPublish || isPublishing || isNormalizingImage"
+        >
+          {{ isPublishing ? "Publicando..." : isNormalizingImage ? "Preparando imagem..." : "Publicar Oferta" }}
         </button>
       </form>
     </main>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import "@/assets/auth.css";
+import { ref, computed, onUnmounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import AuthService from "@/services/auth.service";
 import { useToastStore } from "@/stores/useToastStore";
@@ -13,39 +14,58 @@ const token = ref((route.query.token as string) || "");
 const password = ref("");
 const confirmPassword = ref("");
 const message = ref("");
+const isError = ref(false);
+const isLoading = ref(false);
+let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+
+onUnmounted(() => {
+  if (redirectTimer) clearTimeout(redirectTimer);
+});
 
 const hasMinLength = computed(() => password.value.length >= 6);
 const hasUppercase = computed(() => /[A-Z]/.test(password.value));
 const hasNumberOrSymbol = computed(() => /[0-9!@#$%^&*(),.?":{}|<>]/.test(password.value));
 
 const handleReset = async () => {
-  if (!token.value && !email.value) {
-    message.value = "Informe o e-mail ou utilize o link enviado.";
+  if (isLoading.value) return;
+  isError.value = false;
+  message.value = "";
+
+  if (!token.value) {
+    isError.value = true;
+    message.value = "Link de redefinição inválido ou expirado. Solicite um novo link.";
     return;
   }
   if (password.value.length < 6) {
+    isError.value = true;
     message.value = "A senha deve ter no mínimo 6 caracteres.";
     return;
   }
   if (password.value !== confirmPassword.value) {
+    isError.value = true;
     message.value = "As senhas não coincidem.";
     return;
   }
 
+  isLoading.value = true;
   try {
     await AuthService.resetPassword({
-      token: token.value || undefined,
-      email: email.value || undefined,
+      token: token.value,
+      email: email.value.trim() || undefined,
       password: password.value,
     });
+    isError.value = false;
     message.value = "Senha redefinida com sucesso!";
     toastStore.addToast("Senha atualizada! Faça login.", "success");
-    setTimeout(() => {
+    redirectTimer = setTimeout(() => {
       router.push("/login");
-    }, 1500);
+    }, 1200);
   } catch (error: any) {
+    isError.value = true;
     message.value =
-      error?.response?.data?.message || "Erro ao redefinir senha. Verifique o link ou e-mail.";
+      error?.response?.data?.message || "Erro ao redefinir senha. Solicite um novo link.";
+  } finally {
+    isLoading.value = false;
   }
 };
 </script>
@@ -53,7 +73,7 @@ const handleReset = async () => {
 <template>
   <div class="auth-layout reset-layout">
     <div class="reset-header">
-      <button class="back-link" @click="router.back()">← Voltar</button>
+      <button type="button" class="back-link" @click="router.push('/login')">← Voltar</button>
     </div>
 
     <div class="reset-content">
@@ -74,14 +94,27 @@ const handleReset = async () => {
       <h2 class="reset-title">Nova senha</h2>
       <p class="reset-subtitle">Crie sua nova senha de acesso abaixo.</p>
 
-      <form @submit.prevent="handleReset" class="auth-form mt-4">
-        <div class="form-group">
+      <div v-if="!token" class="invalid-token-box">
+        <p class="info-msg error-msg">
+          Este link de recuperação está incompleto ou expirado.
+        </p>
+        <button
+          type="button"
+          class="btn btn-primary mt-4"
+          @click="router.push('/forgot-password')"
+        >
+          Solicitar novo link de recuperação
+        </button>
+      </div>
+
+      <form v-else @submit.prevent="handleReset" class="auth-form mt-4">
+        <div v-if="email" class="form-group">
           <label>E-mail da conta</label>
           <input
             type="email"
             v-model="email"
             placeholder="seu@email.com"
-            required
+            readonly
           />
         </div>
 
@@ -91,6 +124,7 @@ const handleReset = async () => {
             type="password"
             v-model="password"
             placeholder="••••••••"
+            minlength="6"
             required
           />
         </div>
@@ -101,6 +135,7 @@ const handleReset = async () => {
             type="password"
             v-model="confirmPassword"
             placeholder="••••••••"
+            minlength="6"
             required
           />
         </div>
@@ -117,21 +152,15 @@ const handleReset = async () => {
           </div>
         </div>
 
-        <button type="submit" class="btn btn-primary mt-4">
-          Redefinir senha
+        <button type="submit" class="btn btn-primary mt-4" :disabled="isLoading">
+          {{ isLoading ? "Redefinindo..." : "Redefinir senha" }}
         </button>
       </form>
 
       <p
         v-if="message"
         class="info-msg"
-        :class="{
-          'error-msg':
-            message.includes('não') ||
-            message.includes('Erro') ||
-            message.includes('Informe') ||
-            message.includes('mínimo'),
-        }"
+        :class="{ 'error-msg': isError }"
       >
         {{ message }}
       </p>

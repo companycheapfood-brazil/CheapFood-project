@@ -7,7 +7,8 @@ import { useMerchantStore } from "@/stores/useMerchantStore";
 import { useToastStore } from "@/stores/useToastStore";
 import { storeToRefs } from "pinia";
 import { API_URL, isImageUrl, resolveImageUrl } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
+import { formatBRL } from "@/composables/useAuctionClock";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 
 const merchantStore = useMerchantStore();
@@ -16,8 +17,15 @@ const { activeProducts, expiredProducts, soldProducts } =
   storeToRefs(merchantStore);
 const { togglePause, applyExtraDiscount } = merchantStore;
 
-onMounted(() => {
-  merchantStore.fetchProducts();
+const isLoading = ref(true);
+const busyIds = ref<Record<string, boolean>>({});
+const brokenImages = ref<Record<string, boolean>>({});
+const isStopping = ref(false);
+
+onMounted(async () => {
+  isLoading.value = true;
+  await merchantStore.fetchProducts();
+  isLoading.value = false;
 });
 
 const tabs = [
@@ -35,7 +43,14 @@ const visibleProducts = computed(() => {
 });
 
 function money(v: number) {
-  return `R$ ${v.toFixed(2).replace(".", ",")}`;
+  return formatBRL(v);
+}
+
+function getDiscountPct(orig: number, promo: number): number {
+  const o = Number(orig);
+  const p = Number(promo);
+  if (!Number.isFinite(o) || !Number.isFinite(p) || o <= 0 || p >= o) return 0;
+  return Math.round(((o - p) / o) * 100);
 }
 
 const showStopModal = ref(false);
@@ -47,7 +62,8 @@ function handleStopAuction(productId: string) {
 }
 
 async function confirmStopAuction() {
-  if (!productToStopId.value) return;
+  if (!productToStopId.value || isStopping.value) return;
+  isStopping.value = true;
   try {
     const res = await fetch(
       `${API_URL}/merchant/products/${productToStopId.value}/auction/stop`,
@@ -58,26 +74,49 @@ async function confirmStopAuction() {
         },
       },
     );
-    if (!res.ok) throw new Error("Falha ao parar leilão");
+    if (handleUnauthorized(res.status)) return;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || "Falha ao parar leilão");
     toast.addToast("Leilão encerrado com sucesso! Preço congelado.", "success");
     await merchantStore.fetchProducts();
     showStopModal.value = false;
     productToStopId.value = null;
-  } catch (err) {
-    toast.addToast("Erro ao parar leilão", "error");
+  } catch (err: any) {
+    toast.addToast(err?.message || "Erro ao parar leilão", "error");
+  } finally {
+    isStopping.value = false;
+  }
+}
+
+async function handleTogglePause(productId: string) {
+  if (busyIds.value[productId]) return;
+  busyIds.value[productId] = true;
+  try {
+    await togglePause(productId);
+  } finally {
+    busyIds.value[productId] = false;
   }
 }
 
 async function handleExtraDiscount(productId: string) {
-  const ok = await applyExtraDiscount(productId);
-  if (ok) {
-    toast.addToast(
-      "Desconto extra de 20% aplicado e validade renovada por +2 dias!",
-      "success",
-    );
-    activeTab.value = "ativos";
-  } else {
-    toast.addToast("Não foi possível aplicar desconto extra", "error");
+  if (busyIds.value[productId]) return;
+  busyIds.value[productId] = true;
+  try {
+    const ok = await applyExtraDiscount(productId);
+    if (ok) {
+      toast.addToast(
+        "Desconto extra de 20% aplicado e validade renovada por +2 dias!",
+        "success",
+      );
+      activeTab.value = "ativos";
+    } else {
+      toast.addToast(
+        merchantStore.lastError || "Não foi possível aplicar desconto extra",
+        "error",
+      );
+    }
+  } finally {
+    busyIds.value[productId] = false;
   }
 }
 </script>
@@ -112,22 +151,33 @@ async function handleExtraDiscount(productId: string) {
       </div>
 
       <div class="product-list">
+        <div v-if="isLoading" class="empty-state">
+          <p class="empty-desc" style="margin: 0">Carregando seus produtos...</p>
+        </div>
+        <template v-else>
         <div v-for="p in visibleProducts" :key="p.id" class="product-card">
           <div class="product-content">
             <div class="thumb">
               <img
-                v-if="isImageUrl(p.image)"
-                :src="resolveImageUrl(p.image)"
+                v-if="isImageUrl(p.image || p.icon) && !brokenImages[p.id]"
+                :src="resolveImageUrl(p.image || p.icon)"
                 :alt="p.name"
                 class="real-image"
-              /><span v-else v-html="p.image || p.icon" class="emoji-img"></span>
+                @error="brokenImages[p.id] = true"
+              />
+              <span
+                v-else-if="(p.image || p.icon) && !isImageUrl(p.image || p.icon)"
+                v-html="p.image || p.icon"
+                class="emoji-img"
+              ></span>
+              <SvgIcon v-else name="shopping-bag" :size="24" style="color: var(--mc-navy)" />
             </div>
 
             <div class="info">
               <div class="info-top">
                 <p class="name">{{ p.name }}</p>
                 <div class="price-pill">
-                  <span class="old-price">{{ money(p.originalPrice) }}</span>
+                  <span v-if="p.originalPrice > p.promoPrice" class="old-price">{{ money(p.originalPrice) }}</span>
                   <strong class="promo-price">{{ money(p.promoPrice) }}</strong>
                 </div>
               </div>
@@ -142,12 +192,11 @@ async function handleExtraDiscount(productId: string) {
                 >
                   {{ p.expiresLabel }}
                 </span>
-                <span v-if="!p.auction" class="discount-badge">
-                  -{{
-                    Math.round(
-                      ((p.originalPrice - p.promoPrice) / p.originalPrice) * 100,
-                    )
-                  }}%
+                <span
+                  v-if="!p.auction && getDiscountPct(p.originalPrice, p.promoPrice) > 0"
+                  class="discount-badge"
+                >
+                  -{{ getDiscountPct(p.originalPrice, p.promoPrice) }}%
                 </span>
                 <span v-if="p.paused && p.status === 'ativo'" class="paused-badge">
                   Pausado
@@ -162,7 +211,7 @@ async function handleExtraDiscount(productId: string) {
                 <div
                   class="progress-fill"
                   :style="{
-                    width: `${Math.min(100, (p.reservedCount / Math.max(1, p.quantityAvailable)) * 100)}%`,
+                    width: `${Math.min(100, (p.reservedCount / Math.max(1, p.reservedCount + p.quantityAvailable)) * 100)}%`,
                   }"
                 ></div>
               </div>
@@ -180,16 +229,18 @@ async function handleExtraDiscount(productId: string) {
               Editar
             </button>
             <button
-              v-if="p.status === 'ativo'"
+              v-if="p.status === 'ativo' || p.status === 'pausado'"
               class="action-btn"
               :class="{ paused: p.paused }"
-              @click="togglePause(p.id)"
+              :disabled="busyIds[p.id]"
+              @click="handleTogglePause(p.id)"
             >
               {{ p.paused ? "Ativar" : "Pausar" }}
             </button>
             <button
               v-if="p.status === 'ativo' && p.auction && !p.auction.ended"
               class="action-btn stop-auction"
+              :disabled="busyIds[p.id]"
               @click="handleStopAuction(p.id)"
             >
               Parar Leilão
@@ -197,9 +248,10 @@ async function handleExtraDiscount(productId: string) {
             <button
               v-else-if="p.status === 'vencido'"
               class="action-btn discount"
+              :disabled="busyIds[p.id]"
               @click="handleExtraDiscount(p.id)"
             >
-              +20% Desconto e Reativar
+              {{ busyIds[p.id] ? "Aplicando..." : "+20% Desconto e Reativar" }}
             </button>
           </div>
         </div>
@@ -218,16 +270,19 @@ async function handleExtraDiscount(productId: string) {
             Cadastrar primeiro produto
           </button>
         </div>
+        </template>
       </div>
     </main>
 
     <!-- Modal -->
-    <div v-if="showStopModal" class="modal-overlay" @click.self="showStopModal = false">
+    <div v-if="showStopModal" class="modal-overlay" @click.self="!isStopping && (showStopModal = false)">
       <div class="modal-content">
         <h3>Deseja encerrar este leilão imediatamente? O preço atual será mantido para venda direta.</h3>
         <div class="modal-actions">
-          <button class="btn-cancel" @click="showStopModal = false">Cancelar</button>
-          <button class="btn-confirm" @click="confirmStopAuction">Confirmar Encerramento</button>
+          <button class="btn-cancel" :disabled="isStopping" @click="showStopModal = false">Cancelar</button>
+          <button class="btn-confirm" :disabled="isStopping" @click="confirmStopAuction">
+            {{ isStopping ? "Encerrando..." : "Confirmar Encerramento" }}
+          </button>
         </div>
       </div>
     </div>
@@ -526,7 +581,7 @@ async function handleExtraDiscount(productId: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2000;
   animation: fadeIn 0.2s ease-out;
 }
 

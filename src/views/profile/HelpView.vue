@@ -8,7 +8,6 @@ import { useToastStore } from "@/stores/useToastStore";
 const router = useRouter();
 const toastStore = useToastStore();
 const search = ref("");
-const openIndex = ref<number | null>(0);
 
 const faqs = [
   {
@@ -33,6 +32,8 @@ const faqs = [
   },
 ];
 
+const openQuestion = ref<string | null>(faqs[0]?.q ?? null);
+
 const filteredFaqs = computed(() => {
   const term = search.value.trim().toLowerCase();
   if (!term) return faqs;
@@ -41,8 +42,8 @@ const filteredFaqs = computed(() => {
   );
 });
 
-function toggleFaq(idx: number) {
-  openIndex.value = openIndex.value === idx ? null : idx;
+function toggleFaq(question: string) {
+  openQuestion.value = openQuestion.value === question ? null : question;
 }
 
 function handleContactSupport() {
@@ -76,17 +77,17 @@ function handleContactSupport() {
         <div class="faq-list">
           <div
             class="faq-item"
-            v-for="(faq, idx) in filteredFaqs"
+            v-for="faq in filteredFaqs"
             :key="faq.q"
-            @click="toggleFaq(idx)"
+            @click="toggleFaq(faq.q)"
           >
             <div class="faq-header">
               <span>{{ faq.q }}</span>
               <span class="faq-chevron">
-                <SvgIcon :name="openIndex === idx ? 'minus' : 'plus'" :size="16" :strokeWidth="2.8" />
+                <SvgIcon :name="openQuestion === faq.q ? 'minus' : 'plus'" :size="16" :strokeWidth="2.8" />
               </span>
             </div>
-            <p v-if="openIndex === idx" class="faq-answer">
+            <p v-if="openQuestion === faq.q" class="faq-answer">
               {{ faq.a }}
             </p>
           </div>

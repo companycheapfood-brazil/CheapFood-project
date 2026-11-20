@@ -1,0 +1,231 @@
+/* Estilos compartilhados das telas de autenticação (escopados sob .auth-layout) */
+.auth-layout {
+  min-height: 100vh;
+  background-color: #f6b55d;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+  font-family: "Inter", sans-serif;
+}
+
+.auth-layout .btn {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 1rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.auth-layout .btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.auth-layout .btn-primary {
+  background-color: #ff3b69;
+  color: white;
+  box-shadow: 0 4px 10px rgba(255, 59, 105, 0.3);
+}
+
+.auth-layout .btn-primary:hover:not(:disabled) {
+  background-color: #e0335c;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(255, 59, 105, 0.45);
+}
+
+.auth-layout .btn-primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 2px 5px rgba(255, 59, 105, 0.3);
+}
+
+.auth-layout .logo-container-small {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.auth-layout .logo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 0.5rem;
+}
+
+.auth-layout .cart-icon-small {
+  width: 40px;
+  height: 40px;
+}
+
+.auth-layout .logo-text-small {
+  font-size: 2rem;
+  font-weight: 800;
+  color: white;
+  margin: 0;
+}
+
+.auth-layout .logo-text-highlight {
+  color: #ff3b69;
+}
+
+.auth-layout .subtitle-small {
+  color: #c9791a;
+  font-size: 0.85rem;
+  margin-top: 0.2rem;
+  font-weight: 500;
+}
+
+.auth-layout .auth-box {
+  width: 100%;
+  max-width: 400px;
+}
+
+.auth-layout .toggle-container {
+  display: flex;
+  background-color: #f7d299;
+  border-radius: 25px;
+  margin-bottom: 2rem;
+  padding: 4px;
+}
+
+.auth-layout .toggle-btn {
+  flex: 1;
+  padding: 0.8rem;
+  border: none;
+  background: transparent;
+  border-radius: 20px;
+  font-weight: 600;
+  color: #c9791a;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.auth-layout .toggle-btn.active {
+  background-color: #ff3b69;
+  color: white;
+}
+
+.auth-layout .auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.auth-layout .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.auth-layout .form-group label {
+  color: #c9791a;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.auth-layout .form-group input {
+  padding: 1rem;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  background-color: #fdf6e9;
+  color: #333;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+}
+
+.auth-layout .form-group input:focus {
+  outline: none;
+  border-color: #ff3b69;
+  background-color: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 59, 105, 0.15);
+}
+
+.auth-layout .form-group input::placeholder {
+  color: #bfa47a;
+}
+
+.auth-layout .forgot-link {
+  color: #ff3b69;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-layout .error-msg {
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.auth-layout .mt-4 {
+  margin-top: 1.5rem;
+}
+
+/* Tema do Comerciante */
+.auth-layout.merchant-theme {
+  background-color: #c4b8e8;
+}
+
+.auth-layout.merchant-theme .cart-icon-small path {
+  fill: #1e1b6e;
+}
+
+.auth-layout.merchant-theme .logo-text-small {
+  color: #1e1b6e;
+}
+
+.auth-layout.merchant-theme .logo-text-highlight {
+  color: #c9791a;
+}
+
+.auth-layout.merchant-theme .subtitle-small {
+  color: #4a4268;
+}
+
+.auth-layout.merchant-theme .toggle-container {
+  background-color: rgba(255, 255, 255, 0.5);
+}
+
+.auth-layout.merchant-theme .toggle-btn {
+  color: #4a4268;
+}
+
+.auth-layout.merchant-theme .toggle-btn.active {
+  background-color: #3b30b8;
+  color: white;
+}
+
+.auth-layout.merchant-theme .form-group label {
+  color: #4a4268;
+}
+
+.auth-layout.merchant-theme .form-group input {
+  background-color: rgba(255, 255, 255, 0.78);
+}
+
+.auth-layout.merchant-theme .form-group input:focus {
+  border-color: #3b30b8;
+  box-shadow: 0 0 0 4px rgba(59, 48, 184, 0.15);
+}
+
+.auth-layout.merchant-theme .forgot-link {
+  color: #3b30b8;
+}
+
+.auth-layout.merchant-theme .btn-primary {
+  background-color: #3b30b8;
+  box-shadow: 0 4px 10px rgba(59, 48, 184, 0.3);
+}
+
+.auth-layout.merchant-theme .btn-primary:hover:not(:disabled) {
+  background-color: #2e2494;
+}

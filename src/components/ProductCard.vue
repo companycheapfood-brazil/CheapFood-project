@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import type { Product } from "@/types";
 import { useCartStore } from "@/stores/useCartStore";
@@ -7,6 +7,7 @@ import { useFavoritesStore } from "@/stores/useFavoritesStore";
 import AuctionBadge from "@/components/AuctionBadge.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { isImageUrl, resolveImageUrl } from "@/config/api";
+import { formatBRL } from "@/composables/useAuctionClock";
 import ShopService from "@/services/shop.service";
 
 const props = defineProps<{
@@ -25,22 +26,44 @@ const cartStore = useCartStore();
 const favoritesStore = useFavoritesStore();
 const { addToCart } = cartStore;
 
+const imgError = ref(false);
+watch(
+  () => props.product.image,
+  () => {
+    imgError.value = false;
+  },
+);
+
 function openProduct() {
   ShopService.trackPreference((props.product as any).category, props.product.id);
   router.push({ name: "produto", params: { id: props.product.id } });
 }
 
+const isOutOfStock = computed(() => {
+  const q = props.product.quantity;
+  return q !== undefined && q !== null && Number(q) <= 0;
+});
+
 function quickAdd(event: MouseEvent) {
   event.stopPropagation();
+  if (isOutOfStock.value) return;
   addToCart(props.product, 1);
 }
 
-const currentPrice = computed(() => props.product.price);
+const currentPrice = computed(() => {
+  const n = Number(props.product.price);
+  return Number.isFinite(n) ? n : 0;
+});
+
+const oldPrice = computed(() => {
+  const raw = props.product.old_price ?? props.product.originalPrice;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > currentPrice.value ? n : 0;
+});
 
 const discountShort = computed(() => {
-  const orig = props.product.old_price || props.product.originalPrice;
-  if (orig && orig > currentPrice.value) {
-    const pct = Math.round(((orig - currentPrice.value) / orig) * 100);
+  if (oldPrice.value > currentPrice.value) {
+    const pct = Math.round(((oldPrice.value - currentPrice.value) / oldPrice.value) * 100);
     if (pct > 0) return `-${pct}%`;
   }
   return null;
@@ -52,11 +75,14 @@ const discountShort = computed(() => {
     <div class="thumb">
       <span v-if="discountShort" class="thumb-discount">{{ discountShort }}</span>
       <img
-        v-if="isImageUrl(product.image)"
+        v-if="!imgError && isImageUrl(product.image)"
         :src="resolveImageUrl(product.image)"
+        :alt="product.name"
         class="real-image"
+        @error="imgError = true"
       />
-      <span v-else v-html="product.image"></span>
+      <span v-else-if="product.image && !isImageUrl(product.image)" v-html="product.image"></span>
+      <SvgIcon v-else name="shopping-bag" :size="24" class="thumb-fallback" />
     </div>
 
     <div class="info">
@@ -80,12 +106,8 @@ const discountShort = computed(() => {
         </span>
       </p>
       <div class="price-row">
-        <span class="price"
-          >R$ {{ currentPrice.toFixed(2).replace(".", ",") }}</span
-        >
-        <span v-if="product.old_price" class="original-price"
-          >R$ {{ product.old_price.toFixed(2).replace(".", ",") }}</span
-        >
+        <span class="price">{{ formatBRL(currentPrice) }}</span>
+        <span v-if="oldPrice > 0" class="original-price">{{ formatBRL(oldPrice) }}</span>
       </div>
       <div class="badges">
         <span
@@ -146,7 +168,8 @@ const discountShort = computed(() => {
 
       <button
         class="add-btn"
-        aria-label="Adicionar ao carrinho"
+        :disabled="isOutOfStock"
+        :aria-label="isOutOfStock ? 'Produto esgotado' : 'Adicionar ao carrinho'"
         @click="quickAdd"
       >
         <svg
@@ -380,6 +403,17 @@ const discountShort = computed(() => {
 
 .add-btn:active {
   transform: translateY(0) scale(0.95);
+}
+
+.add-btn:disabled {
+  background: #d1d5db;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.thumb-fallback {
+  color: #bfa47a;
 }
 
 .card-actions {

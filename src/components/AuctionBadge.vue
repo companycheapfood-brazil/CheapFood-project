@@ -19,24 +19,26 @@ const props = withDefaults(
 const { now } = useAuctionClock();
 const state = computed(() => computeAuctionState(props.auction, now.value));
 const countdown = computed(() => formatCountdown(state.value.msToEnd));
+const isEnded = computed(() => Boolean(props.auction?.ended) || (state.value.msToEnd ?? 0) <= 0);
 
 // Cálculo da régua visual do leilão híbrido
-const startPrice = computed(() => Number(props.auction.startPrice || 0));
-const currentBid = computed(() => Number(props.auction.highestBid || props.auction.startPrice || 0));
-const minPrice = computed(() => Number(props.auction.minPrice || (startPrice.value * 1.5)));
+const startPrice = computed(() => Number(props.auction?.startPrice) || 0);
+const currentBid = computed(() => Number(props.auction?.highestBid ?? props.auction?.startPrice) || 0);
+const minPrice = computed(() => Number(props.auction?.minPrice) || startPrice.value * 1.5);
 
 // Porcentagem de progresso do tempo / lances
 const progressPercent = computed(() => {
-  if (props.auction.ended || (state.value.msToEnd ?? 0) <= 0) return 100;
-  const endMs = props.auction.endTime ? Date.parse(props.auction.endTime) : 0;
-  if (!endMs || endMs <= now.value) return 100;
-  const startMs = props.auction.startTime ? Date.parse(props.auction.startTime) : 0;
+  if (isEnded.value) return 100;
+  const endMs = props.auction?.endTime ? Date.parse(props.auction.endTime) : 0;
+  if (!Number.isFinite(endMs) || endMs <= now.value) return 100;
+  const startMs = props.auction?.startTime ? Date.parse(props.auction.startTime) : 0;
   const totalDuration =
-    startMs && endMs > startMs ? endMs - startMs : 2 * 60 * 60 * 1000;
+    Number.isFinite(startMs) && startMs > 0 && endMs > startMs ? endMs - startMs : 2 * 60 * 60 * 1000;
   const remaining = Math.max(0, endMs - now.value);
-  const pct = Math.min(100, Math.max(10, Math.round(((totalDuration - remaining) / totalDuration) * 100)));
-  return pct;
+  return Math.min(100, Math.max(10, Math.round(((totalDuration - remaining) / totalDuration) * 100)));
 });
+
+const pointerLeftPercent = computed(() => Math.min(88, Math.max(12, progressPercent.value)));
 </script>
 
 <template>
@@ -44,6 +46,7 @@ const progressPercent = computed(() => {
   <span
     v-if="variant === 'compact'"
     class="auction-chip"
+    :class="{ ended: isEnded }"
   >
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -60,11 +63,11 @@ const progressPercent = computed(() => {
         d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"
       />
     </svg>
-    Leilão: {{ formatBRL(auction.highestBid || auction.startPrice) }}
+    {{ isEnded ? "Leilão Encerrado" : `Leilão: ${formatBRL(currentBid)}` }}
   </span>
 
   <!-- Painel completo com Régua Visual do Leilão Híbrido (tela do produto) -->
-  <div v-else class="auction-panel">
+  <div v-else class="auction-panel" :class="{ 'is-ended': isEnded }">
     <div class="panel-head">
       <div class="panel-title-group">
         <span class="panel-title">
@@ -83,13 +86,15 @@ const progressPercent = computed(() => {
               d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"
             />
           </svg>
-          Leilão Híbrido Ativo
+          {{ isEnded ? "Leilão Encerrado" : "Leilão Híbrido Ativo" }}
         </span>
-        <span class="panel-subtitle">Dispute com lances ou compre agora na hora</span>
+        <span class="panel-subtitle">
+          {{ isEnded ? "Tempo de lances finalizado" : "Dispute com lances ou compre agora na hora" }}
+        </span>
       </div>
       <div class="countdown-badge">
-        <span class="countdown-label">Termina em:</span>
-        <span class="countdown-time">{{ countdown }}</span>
+        <span class="countdown-label">{{ isEnded ? "Status:" : "Termina em:" }}</span>
+        <span class="countdown-time">{{ isEnded ? "Encerrado" : countdown }}</span>
       </div>
     </div>
 
@@ -97,7 +102,7 @@ const progressPercent = computed(() => {
     <div class="decay-timeline-box">
       <div class="timeline-track">
         <div class="timeline-fill" :style="{ width: `${progressPercent}%` }"></div>
-        <div class="timeline-pointer" :style="{ left: `${progressPercent}%` }">
+        <div class="timeline-pointer" :style="{ left: `${pointerLeftPercent}%` }">
           <span class="pointer-ping"></span>
           <span class="pointer-value">{{ formatBRL(currentBid) }}</span>
         </div>
@@ -155,6 +160,17 @@ const progressPercent = computed(() => {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   box-shadow: 0 2px 6px rgba(255, 59, 105, 0.25);
+}
+
+.auction-chip.ended {
+  background: #64748b;
+  box-shadow: none;
+}
+
+.auction-panel.is-ended .pointer-ping {
+  animation: none;
+  background: #64748b;
+  box-shadow: none;
 }
 
 .auction-panel {

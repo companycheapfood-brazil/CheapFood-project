@@ -4,6 +4,7 @@ import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
 import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
 import { useMerchantStore } from "@/stores/useMerchantStore";
 import { useToastStore } from "@/stores/useToastStore";
+import { formatBRL } from "@/composables/useAuctionClock";
 import { storeToRefs } from "pinia";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 
@@ -14,9 +15,14 @@ const { pendingOrders, pickedUpOrders, expiredOrders } =
 const { confirmPickup, cancelOrder } = merchantStore;
 
 const searchCode = ref("");
+const isLoading = ref(true);
+const busyOrderIds = ref<Record<string, boolean>>({});
+const orderIdToCancel = ref<string | null>(null);
 
-onMounted(() => {
-  merchantStore.fetchOrders();
+onMounted(async () => {
+  isLoading.value = true;
+  await merchantStore.fetchOrders();
+  isLoading.value = false;
 });
 
 const activeTab = ref<"pendentes" | "retirados" | "expirados">("pendentes");
@@ -45,20 +51,42 @@ const visibleOrders = computed(() => {
   if (!q) return list;
   return list.filter(
     (o) =>
-      o.code.toUpperCase().includes(q) ||
-      o.customerName.toUpperCase().includes(q) ||
-      o.productName.toUpperCase().includes(q),
+      String(o.code || "").toUpperCase().includes(q) ||
+      String(o.customerName || "").toUpperCase().includes(q) ||
+      String(o.productName || "").toUpperCase().includes(q),
   );
 });
 
 async function handleConfirmPickup(orderId: string) {
-  await confirmPickup(orderId);
-  toast.addToast("Retirada confirmada com sucesso!", "success");
+  if (busyOrderIds.value[orderId]) return;
+  busyOrderIds.value[orderId] = true;
+  try {
+    const ok = await confirmPickup(orderId);
+    if (ok) {
+      toast.addToast("Retirada confirmada com sucesso!", "success");
+    }
+  } finally {
+    busyOrderIds.value[orderId] = false;
+  }
 }
 
-async function handleCancelOrder(orderId: string) {
-  await cancelOrder(orderId);
-  toast.addToast("Pedido cancelado e estoque devolvido.", "info");
+function requestCancelOrder(orderId: string) {
+  orderIdToCancel.value = orderId;
+}
+
+async function confirmCancelOrder() {
+  const orderId = orderIdToCancel.value;
+  if (!orderId || busyOrderIds.value[orderId]) return;
+  busyOrderIds.value[orderId] = true;
+  try {
+    const ok = await cancelOrder(orderId);
+    if (ok) {
+      toast.addToast("Pedido cancelado e estoque devolvido.", "info");
+    }
+    orderIdToCancel.value = null;
+  } finally {
+    busyOrderIds.value[orderId] = false;
+  }
 }
 </script>
 
@@ -112,6 +140,8 @@ async function handleCancelOrder(orderId: string) {
       </div>
 
       <div class="order-list">
+        <p v-if="isLoading" class="empty">Carregando pedidos...</p>
+        <template v-else>
         <div
           v-for="order in visibleOrders"
           :key="order.id"
@@ -142,7 +172,7 @@ async function handleCancelOrder(orderId: string) {
             <SvgIcon name="shopping-bag" :size="14" />
             <span>{{ order.productName }} · Qtd: {{ order.quantity }}</span>
             <span v-if="order.price" class="order-total">
-              · R$ {{ (order.price * order.quantity).toFixed(2).replace(".", ",") }}
+              · {{ formatBRL(order.price * order.quantity) }}
             </span>
           </p>
 
@@ -161,14 +191,16 @@ async function handleCancelOrder(orderId: string) {
           <div v-if="order.status === 'pendente'" class="order-actions">
             <button
               class="confirm-btn"
+              :disabled="busyOrderIds[order.id]"
               @click.stop="handleConfirmPickup(order.id)"
             >
               <SvgIcon name="check-circle" :size="15" />
-              Confirmar retirada
+              {{ busyOrderIds[order.id] ? "Processando..." : "Confirmar retirada" }}
             </button>
             <button
               class="cancel-btn"
-              @click.stop="handleCancelOrder(order.id)"
+              :disabled="busyOrderIds[order.id]"
+              @click.stop="requestCancelOrder(order.id)"
             >
               Cancelar
             </button>
@@ -178,8 +210,41 @@ async function handleCancelOrder(orderId: string) {
         <p v-if="visibleOrders.length === 0" class="empty">
           Nenhum pedido encontrado nesta categoria.
         </p>
+        </template>
       </div>
     </main>
+
+    <!-- Modal de Confirmação de Cancelamento -->
+    <div
+      v-if="orderIdToCancel"
+      class="modal-overlay"
+      @click.self="!busyOrderIds[orderIdToCancel] && (orderIdToCancel = null)"
+    >
+      <div class="modal-card">
+        <h3 class="modal-title">Cancelar reserva?</h3>
+        <p class="modal-desc">
+          O pedido será marcado como expirado e as unidades retornarão automaticamente ao estoque.
+        </p>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="modal-btn-back"
+            :disabled="busyOrderIds[orderIdToCancel]"
+            @click="orderIdToCancel = null"
+          >
+            Voltar
+          </button>
+          <button
+            type="button"
+            class="modal-btn-danger"
+            :disabled="busyOrderIds[orderIdToCancel]"
+            @click="confirmCancelOrder"
+          >
+            {{ busyOrderIds[orderIdToCancel] ? "Cancelando..." : "Confirmar cancelamento" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <MerchantBottomNav />
   </div>
@@ -431,5 +496,70 @@ async function handleCancelOrder(orderId: string) {
   color: var(--mc-text-muted);
   font-size: 13px;
   padding: 24px 0;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 16px;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 360px;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--mc-navy);
+  margin-bottom: 8px;
+}
+
+.modal-desc {
+  font-size: 12px;
+  color: var(--mc-text-muted);
+  line-height: 1.4;
+  margin-bottom: 18px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.modal-btn-back {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--mc-border);
+  color: var(--mc-text-muted);
+  border-radius: 10px;
+  padding: 11px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modal-btn-danger {
+  flex: 1.2;
+  background: var(--mc-danger);
+  border: none;
+  color: #fff;
+  border-radius: 10px;
+  padding: 11px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
 }
 </style>

@@ -49,7 +49,8 @@ const tabs = [
         active:
           route.name === tab.name ||
           (tab.name === 'home' && route.name === 'produto') ||
-          (tab.name === 'carrinho' && route.name === 'comprovante'),
+          (tab.name === 'carrinho' && route.name === 'comprovante') ||
+          (tab.name === 'perfil' && route.path.startsWith('/perfil')),
       }"
     >
       <span class="nav-icon-wrap">

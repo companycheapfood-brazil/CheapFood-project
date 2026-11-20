@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "@/components/BottomNav.vue";
 import AuctionBadge from "@/components/AuctionBadge.vue";
@@ -7,9 +7,9 @@ import SvgIcon from "@/components/ui/SvgIcon.vue";
 import ShopService from "@/services/shop.service";
 import { useCartStore } from "@/stores/useCartStore";
 import { useToastStore } from "@/stores/useToastStore";
-import { useAuctionClock } from "@/composables/useAuctionClock";
+import { formatBRL, useAuctionClock } from "@/composables/useAuctionClock";
 import { API_URL, isImageUrl, resolveImageUrl } from "@/config/api";
-import { authHeaders, getLoggedUserId } from "@/utils/auth";
+import { authHeaders, getLoggedUserId, handleUnauthorized } from "@/utils/auth";
 
 const props = defineProps({
   id: {
@@ -20,6 +20,9 @@ const props = defineProps({
 
 const router = useRouter();
 const product = ref<any>(null);
+const isLoading = ref(true);
+const loadError = ref("");
+const imgError = ref(false);
 const cartStore = useCartStore();
 const toastStore = useToastStore();
 const { addToCart: addCartAction } = cartStore;
@@ -28,13 +31,46 @@ const bidValue = ref<number | null>(null);
 const isSubmittingBid = ref(false);
 const isClaiming = ref(false);
 
-onMounted(async () => {
-  product.value = await ShopService.getProduct(props.id);
+async function loadProduct(productId: string) {
+  isLoading.value = true;
+  loadError.value = "";
+  imgError.value = false;
+  product.value = null;
+  try {
+    const data = await ShopService.getProduct(productId);
+    if (!data || !data.id) {
+      loadError.value = "Produto não encontrado ou removido da vitrine.";
+      return;
+    }
+    product.value = data;
+  } catch (err: any) {
+    loadError.value =
+      err?.response?.data?.message ||
+      "Não foi possível carregar este produto. Ele pode ter sido removido.";
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+watch(
+  () => props.id,
+  (newId) => {
+    if (newId) loadProduct(newId);
+  },
+  { immediate: true },
+);
+
+const isOutOfStock = computed(() => {
+  const q = product.value?.quantity;
+  return q !== undefined && q !== null && Number(q) <= 0;
 });
 
-const auctionEndMs = computed(() =>
-  product.value?.auction ? Date.parse(product.value.auction.endTime) : null,
-);
+const auctionEndMs = computed(() => {
+  const raw = product.value?.auction?.endTime;
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+});
 
 const isAuctionEnded = computed(() => {
   const auction = product.value?.auction;
@@ -45,17 +81,25 @@ const isAuctionEnded = computed(() => {
 
 const hasBids = computed(() => (product.value?.auction?.bids?.length ?? 0) > 0);
 
+const isLeading = computed(() => {
+  if (isAuctionEnded.value || !hasBids.value) return false;
+  const userId = getLoggedUserId();
+  return !!userId && String(product.value.auction.winnerId) === userId;
+});
+
 const isWinner = computed(() => {
   if (!isAuctionEnded.value || !hasBids.value) return false;
   const userId = getLoggedUserId();
-  return !!userId && product.value.auction.winnerId === userId;
+  return !!userId && String(product.value.auction.winnerId) === userId;
 });
 
-/** Lance mínimo sugerido: maior lance + R$ 0,50. */
+/** Lance mínimo sugerido: preço inicial se sem lances; maior lance + R$ 0,50 se já houver lances. */
 const minNextBid = computed(() => {
   const a = product.value?.auction;
   if (!a) return 0;
-  return Math.round(((hasBids.value ? a.highestBid : a.startPrice) + 0.5) * 100) / 100;
+  const raw = hasBids.value ? Number(a.highestBid || 0) + 0.5 : Number(a.startPrice || 0);
+  const rounded = Math.round(raw * 100) / 100;
+  return Number.isFinite(rounded) ? rounded : 0;
 });
 
 const discountLabel = computed(() => product.value?.discountLabel || null);
@@ -68,12 +112,13 @@ const validityLabel = computed(() => {
 });
 
 const addToCart = () => {
+  if (!product.value || isOutOfStock.value) return;
   addCartAction(product.value, 1);
   router.push("/carrinho");
 };
 
 const claimWinningAuction = async () => {
-  if (isClaiming.value) return;
+  if (isClaiming.value || !product.value) return;
   isClaiming.value = true;
   try {
     const res = await fetch(`${API_URL}/checkout`, {
@@ -87,18 +132,41 @@ const claimWinningAuction = async () => {
       }),
     });
 
-    const data = await res.json();
+    if (handleUnauthorized(res.status)) return;
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.message || "Erro ao resgatar leilão");
     }
 
+    const code = String(data.code || "");
+    cartStore.lastReservationCode = code;
+    cartStore.lastReceipt = {
+      code,
+      total: Number(data.total ?? product.value.auction?.highestBid ?? product.value.price ?? 0),
+      savings: Number(data.savings ?? 0),
+      store: data.store || product.value.store || "Padaria & Empório Central",
+      storeAddress: data.storeAddress || product.value.storeAddress || "Rua São Paulo, 100 - Centro, Marília/SP",
+      paymentMethod: "store",
+      items: Array.isArray(data.items)
+        ? data.items
+        : [
+            {
+              id: String(product.value.id),
+              name: product.value.name,
+              quantity: 1,
+              price: Number(data.total ?? product.value.auction?.highestBid ?? 0),
+              total: Number(data.total ?? product.value.auction?.highestBid ?? 0),
+            },
+          ],
+    };
+
     toastStore.addToast("Leilão resgatado com sucesso!", "success");
     router.push({
       path: "/comprovante",
-      query: { code: data.code, subtotal: data.total, savings: data.savings },
+      query: { code, subtotal: data.total, savings: data.savings },
     });
   } catch (err: any) {
-    toastStore.addToast(err.message, "error");
+    toastStore.addToast(err?.message || "Erro ao resgatar leilão", "error");
   } finally {
     isClaiming.value = false;
   }
@@ -146,22 +214,30 @@ async function submitReview() {
       body: JSON.stringify({
         productId: product.value.id,
         rating: reviewRating.value,
-        comment: reviewComment.value,
+        comment: reviewComment.value.trim(),
         tags: selectedTags.value,
       }),
     });
-    const data = await res.json();
+    if (handleUnauthorized(res.status)) return;
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.message || "Erro ao enviar avaliação");
     }
-    // Recarrega os dados do produto com a avaliação atualizada e nova média
-    product.value = await ShopService.getProduct(props.id);
     showReviewModal.value = false;
     reviewComment.value = "";
     reviewRating.value = 5;
-    toastStore.addToast("Avaliação publicada com sucesso! ⭐", "success");
+    toastStore.addToast("Avaliação publicada com sucesso!", "success");
+    // Recarrega os dados do produto em try/catch isolado para não sobrescrever sucesso
+    try {
+      const updated = await ShopService.getProduct(props.id);
+      if (updated && updated.id) {
+        product.value = updated;
+      }
+    } catch {
+      // ignora erro de recarga
+    }
   } catch (err: any) {
-    toastStore.addToast(err.message || "Não foi possível enviar a avaliação", "error");
+    toastStore.addToast(err?.message || "Não foi possível enviar a avaliação", "error");
   } finally {
     isSubmittingReview.value = false;
   }
@@ -178,8 +254,8 @@ const submitBid = async () => {
     openBidModal("error", "Faça login para dar um lance.");
     return;
   }
-  if (!bidValue.value || bidValue.value <= 0) {
-    openBidModal("error", "Por favor, insira um valor para o lance.");
+  if (!bidValue.value || !Number.isFinite(bidValue.value) || bidValue.value <= 0) {
+    openBidModal("error", "Por favor, insira um valor válido para o lance.");
     return;
   }
   if (isSubmittingBid.value) return;
@@ -193,11 +269,12 @@ const submitBid = async () => {
       },
       body: JSON.stringify({ valor: bidValue.value }),
     });
+    if (handleUnauthorized(res.status)) return;
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       product.value = data;
       bidValue.value = null;
-      openBidModal("success", "Lance enviado com sucesso! Boa sorte.");
+      openBidModal("success", "Lance enviado com sucesso! Você está na frente.");
     } else {
       openBidModal("error", data.message || "Erro ao dar lance");
     }
@@ -218,11 +295,14 @@ const submitBid = async () => {
       </button>
       <div class="product-image-large">
         <img
-          v-if="isImageUrl(product.image)"
+          v-if="!imgError && isImageUrl(product.image)"
           :src="resolveImageUrl(product.image)"
+          :alt="product.name"
           class="real-image-large"
+          @error="imgError = true"
         />
-        <span v-else class="emoji-img" v-html="product.image"></span>
+        <span v-else-if="product.image && !isImageUrl(product.image)" class="emoji-img" v-html="product.image"></span>
+        <SvgIcon v-else name="shopping-bag" :size="44" style="color: #bfa47a" />
       </div>
       <h1 class="product-title">{{ product.name }}</h1>
       <p class="product-store">
@@ -231,20 +311,16 @@ const submitBid = async () => {
           <SvgIcon name="star-filled" :size="12" style="color: #f5a623" />
           <span>
             {{ Number(product.ratingAverage || 5).toFixed(1).replace('.', ',') }}
-            ({{ product.ratingCount || (product.reviews ? product.reviews.length : 1) }})
+            ({{ product.ratingCount ?? (product.reviews ? product.reviews.length : 0) }})
           </span>
         </span>
       </p>
 
       <div class="price-row">
-        <span class="price"
-          >R${{
-            clock.getCurrentPrice(product).toFixed(2).replace(".", ",")
-          }}</span
-        >
-        <span class="old-price" v-if="product.old_price"
-          >R${{ product.old_price.toFixed(2).replace(".", ",") }}</span
-        >
+        <span class="price">{{ formatBRL(clock.getCurrentPrice(product)) }}</span>
+        <span class="old-price" v-if="product.old_price && product.old_price > product.price">
+          {{ formatBRL(product.old_price) }}
+        </span>
       </div>
 
       <div class="tag-row">
@@ -365,20 +441,47 @@ const submitBid = async () => {
         <template v-if="!isAuctionEnded">
           <div class="bid-section">
             <h3 class="section-title">Dar um Lance</h3>
+            <p v-if="isLeading" class="leader-pill">
+              <SvgIcon name="check-circle" :size="14" />
+              <span>Você está liderando este leilão!</span>
+            </p>
             <div class="bid-input-row">
               <input
                 type="number"
                 step="0.50"
+                :min="minNextBid"
                 v-model.number="bidValue"
-                :placeholder="`Mínimo R$ ${minNextBid.toFixed(2).replace('.', ',')}`"
+                :placeholder="`Mínimo ${formatBRL(minNextBid)}`"
                 class="bid-input"
+                :disabled="isOutOfStock"
               />
-              <button class="bid-button" :disabled="isSubmittingBid" @click="submitBid">
+              <button
+                class="bid-button"
+                :disabled="isSubmittingBid || isOutOfStock"
+                @click="submitBid"
+              >
                 {{ isSubmittingBid ? 'Enviando...' : 'Dar Lance' }}
               </button>
             </div>
+            <div v-if="product.auction.bids && product.auction.bids.length > 0" class="recent-bids">
+              <p class="recent-bids-title">Últimos lances</p>
+              <div
+                v-for="b in product.auction.bids.slice(0, 3)"
+                :key="b.id"
+                class="recent-bid-row"
+              >
+                <span>{{ b.usuario }}</span>
+                <strong>{{ formatBRL(b.valor) }}</strong>
+              </div>
+            </div>
           </div>
-          <button class="add-button" @click="addToCart">Comprar Agora por R${{ product.price.toFixed(2).replace(".", ",") }}</button>
+          <button
+            class="add-button"
+            :disabled="isOutOfStock"
+            @click="addToCart"
+          >
+            {{ isOutOfStock ? "Produto Esgotado" : `Comprar Agora por ${formatBRL(product.price)}` }}
+          </button>
         </template>
         <template v-else>
           <div v-if="isWinner" class="bid-section" style="text-align: center;">
@@ -386,16 +489,40 @@ const submitBid = async () => {
               <SvgIcon name="check-circle" :size="18" style="color: #15803d" />
               <span>Você venceu este leilão!</span>
             </h3>
-            <button class="add-button" @click="claimWinningAuction" style="background: var(--mc-green); color: #ffffff;">Resgatar e Gerar Ticket por R$ {{ product.auction.highestBid.toFixed(2).replace('.', ',') }}</button>
+            <button
+              class="add-button"
+              :disabled="isClaiming"
+              @click="claimWinningAuction"
+              style="background: var(--mc-green); color: #ffffff;"
+            >
+              {{
+                isClaiming
+                  ? "Gerando ticket..."
+                  : `Resgatar e Gerar Ticket por ${formatBRL(product.auction.highestBid)}`
+              }}
+            </button>
           </div>
           <div v-else class="bid-section" style="text-align: center; color: #888;">
-            <p v-if="product.auction.bids && product.auction.bids.length > 0">Leilão Encerrado. Arrematado por R$ {{ product.auction.highestBid.toFixed(2).replace('.', ',') }}</p>
-            <p v-else>Encerrado sem lances</p>
+            <p v-if="hasBids">
+              Leilão Encerrado. Arrematado por {{ formatBRL(product.auction.highestBid) }}
+            </p>
+            <template v-else>
+              <p style="margin-bottom: 12px;">Leilão encerrado sem lances — disponível para compra direta.</p>
+              <button
+                class="add-button"
+                :disabled="isOutOfStock"
+                @click="addToCart"
+              >
+                {{ isOutOfStock ? "Produto Esgotado" : `Adicionar ao Carrinho (${formatBRL(product.price)})` }}
+              </button>
+            </template>
           </div>
         </template>
       </template>
       <template v-else>
-        <button class="add-button" @click="addToCart">Adicionar ao Carrinho</button>
+        <button class="add-button" :disabled="isOutOfStock" @click="addToCart">
+          {{ isOutOfStock ? "Produto Esgotado" : "Adicionar ao Carrinho" }}
+        </button>
       </template>
     </main>
 
@@ -484,8 +611,17 @@ const submitBid = async () => {
 
     <BottomNav />
   </div>
-  <div v-else class="screen" style="align-items: center; justify-content: center; padding: 2rem; text-align: center;">
-    <p style="color: #888; font-weight: 600;">Carregando detalhes do produto...</p>
+  <div v-else class="screen" style="align-items: center; justify-content: center; padding: 2rem; text-align: center; padding-bottom: 90px;">
+    <p v-if="isLoading" style="color: #888; font-weight: 600;">Carregando detalhes do produto...</p>
+    <div v-else style="max-width: 340px;">
+      <p style="color: #5c3809; font-weight: 800; margin-bottom: 12px;">
+        {{ loadError || "Produto não encontrado." }}
+      </p>
+      <button type="button" class="modal-btn" @click="router.push('/')">
+        Voltar para ofertas
+      </button>
+    </div>
+    <BottomNav />
   </div>
 </template>
 
@@ -612,6 +748,54 @@ const submitBid = async () => {
   border-radius: 20px;
   font-size: 0.8rem;
   font-weight: 700;
+}
+
+.expire-tag.danger {
+  background-color: #d92d3f;
+  color: #ffffff;
+}
+
+.leader-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #eafbe4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin: 0 0 10px 0;
+}
+
+.recent-bids {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #f0dfb8;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recent-bids-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #8c5b16;
+  text-transform: uppercase;
+  margin: 0 0 2px 0;
+}
+
+.recent-bid-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #5c3809;
+}
+
+.add-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .content {

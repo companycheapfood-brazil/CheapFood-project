@@ -15,8 +15,16 @@ export const useToastStore = defineStore("toast", () => {
     type: "success" | "error" | "info" = "info",
     duration = 3000,
   ) {
+    const cleanMsg = String(message || "").trim();
+    if (!cleanMsg) return;
+    if (toasts.value.some((t) => t.message === cleanMsg && t.type === type)) {
+      return;
+    }
+    if (toasts.value.length >= 3) {
+      toasts.value.shift();
+    }
     const id = Math.random().toString(36).substring(2, 9);
-    toasts.value.push({ id, message, type });
+    toasts.value.push({ id, message: cleanMsg, type });
 
     setTimeout(() => {
       removeToast(id);

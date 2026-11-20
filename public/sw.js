@@ -1,5 +1,5 @@
 // CheapFood Service Worker - PWA Offline Caching
-const CACHE_NAME = 'cheapfood-cache-v1';
+const CACHE_NAME = 'cheapfood-cache-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -30,32 +30,51 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Ignora requisições de API (deixa a API sempre com network direto)
-  if (event.request.url.includes('/api/')) {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  let url;
+  try {
+    url = new URL(req.url);
+  } catch {
     return;
   }
 
-  // Network first com fallback para cache
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/static/uploads/')) {
+    return;
+  }
+
+  // Network first com fallback seguro para cache
   event.respondWith(
-    fetch(event.request)
+    fetch(req)
       .then((response) => {
         if (!response || response.status !== 200 || response.type !== 'basic') {
           return response;
         }
+        const contentType = response.headers.get('content-type') || '';
+        const isHtml = contentType.includes('text/html');
+        // Nunca cacheia fallback HTML de SPA sob URLs de JS/CSS/ativos
+        if (isHtml && req.mode !== 'navigate' && url.pathname !== '/' && url.pathname !== '/index.html') {
+          return response;
+        }
         const responseToCache = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
+        const cacheKey = req.mode === 'navigate' ? '/index.html' : req;
+        caches.open(CACHE_NAME)
+          .then((cache) => cache.put(cacheKey, responseToCache))
+          .catch(() => {});
         return response;
       })
       .catch(() => {
-        return caches.match(event.request).then((cachedResponse) => {
+        return caches.match(req).then((cachedResponse) => {
           if (cachedResponse) {
             return cachedResponse;
           }
-          if (event.request.mode === 'navigate') {
-            return caches.match('/index.html');
+          if (req.mode === 'navigate') {
+            return caches.match('/index.html').then((fallback) => fallback || Response.error());
           }
+          return Response.error();
         });
       })
   );

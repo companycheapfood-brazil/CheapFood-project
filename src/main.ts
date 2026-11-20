@@ -2,8 +2,34 @@ import "./assets/main.css";
 
 import { createApp } from "vue";
 import { createPinia } from "pinia";
+import axios from "axios";
 import App from "./App.vue";
 import router from "./router";
+import { handleUnauthorized } from "./utils/auth";
+
+axios.defaults.timeout = 30000;
+
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const reqUrl = String(error?.config?.url || "");
+    if (status === 401 && !reqUrl.includes("/auth/login")) {
+      handleUnauthorized(401);
+    }
+    return Promise.reject(error);
+  },
+);
+
+if (typeof window !== "undefined") {
+  window.addEventListener("vite:preloadError", () => {
+    const key = "cf_preload_reloaded";
+    if (!sessionStorage.getItem(key)) {
+      sessionStorage.setItem(key, "1");
+      window.location.reload();
+    }
+  });
+}
 
 const app = createApp(App);
 
@@ -12,12 +38,15 @@ app.use(router);
 
 app.mount("#app");
 
-// Registrar Service Worker PWA para suporte offline e instalação no celular
-if ("serviceWorker" in navigator && !window.location.host.includes("localhost:5173")) {
+// Registrar Service Worker PWA apenas em produção fora de localhost
+if (
+  import.meta.env.PROD &&
+  "serviceWorker" in navigator &&
+  !["localhost", "127.0.0.1"].includes(window.location.hostname)
+) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js")
-      .then((reg) => console.log("CheapFood PWA ServiceWorker ativo:", reg.scope))
-      .catch((err) => console.log("Falha ao registrar ServiceWorker:", err));
+      .catch((err) => console.warn("Falha ao registrar ServiceWorker:", err));
   });
 }

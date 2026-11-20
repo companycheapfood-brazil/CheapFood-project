@@ -4,35 +4,46 @@ import { useRouter, useRoute } from "vue-router";
 import { storeToRefs } from "pinia";
 import { useSidebarStore } from "@/stores/useSidebarStore";
 import { useCartStore } from "@/stores/useCartStore";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
+import { useMerchantStore } from "@/stores/useMerchantStore";
 import { useToastStore } from "@/stores/useToastStore";
 import AuthService from "@/services/auth.service";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
+import { normalizeUserRole, sessionVersion } from "@/utils/auth";
 
 const router = useRouter();
 const route = useRoute();
 const sidebarStore = useSidebarStore();
 const cartStore = useCartStore();
+const favoritesStore = useFavoritesStore();
+const merchantStore = useMerchantStore();
 const toast = useToastStore();
 
 const { isOpen, mobileFrame } = storeToRefs(sidebarStore);
 const { totalItems } = storeToRefs(cartStore);
 const isSwitching = ref(false);
 
-const isMerchantRoute = computed(() => route.path.startsWith("/comerciante"));
-
 const currentUser = computed(() => {
+  void isOpen.value;
+  void sessionVersion.value;
   void route.fullPath;
   try {
     const raw = localStorage.getItem("user");
     if (raw) {
       const parsed = JSON.parse(raw);
-      return parsed.user || parsed;
+      if (parsed?.token) {
+        return parsed.user || parsed;
+      }
     }
   } catch {}
-  return {
-    name: isMerchantRoute.value ? "Padaria Central" : "João Silva",
-    email: isMerchantRoute.value ? "admin@cheapfood.com" : "joao@email.com",
-  };
+  return null;
+});
+
+const isMerchantRoute = computed(() => {
+  if (currentUser.value) {
+    return normalizeUserRole(currentUser.value) === "merchant";
+  }
+  return route.path.startsWith("/comerciante");
 });
 
 watch(
@@ -50,11 +61,13 @@ function navigateTo(path: string) {
 async function switchProfile(role: "consumer" | "merchant", targetPath?: string) {
   isSwitching.value = true;
   try {
+    cartStore.resetSession();
+    favoritesStore.resetState();
+    merchantStore.resetState();
     await AuthService.login({
       email: role === "merchant" ? "admin@cheapfood.com" : "joao@email.com",
       password: role === "merchant" ? "admin123" : "123456",
     });
-    cartStore.clearCart();
     toast.addToast(
       role === "merchant"
         ? "Alternado para Painel do Lojista!"
@@ -63,19 +76,18 @@ async function switchProfile(role: "consumer" | "merchant", targetPath?: string)
     );
     sidebarStore.close();
     router.push(targetPath || (role === "merchant" ? "/comerciante" : "/"));
-  } catch (e) {
+  } catch {
     toast.addToast("Erro ao alternar perfil", "error");
   } finally {
     isSwitching.value = false;
   }
 }
 
-function handleLogout() {
-  cartStore.clearCart();
-  localStorage.removeItem("user");
-  localStorage.removeItem("cf_token");
-  localStorage.removeItem("cf_recent_categories");
-  localStorage.removeItem("cf_recent_product_ids");
+async function handleLogout() {
+  cartStore.resetSession();
+  favoritesStore.resetState();
+  merchantStore.resetState();
+  await AuthService.logout();
   sidebarStore.close();
   router.push("/start");
 }
@@ -140,8 +152,8 @@ const merchantLinks = [
             <SvgIcon :name="isMerchantRoute ? 'store' : 'user'" :size="18" />
           </div>
           <div class="user-meta">
-            <p class="user-name">{{ currentUser.name || "Usuário CheapFood" }}</p>
-            <p class="user-email">{{ currentUser.email || "cliente@cheapfood.com" }}</p>
+            <p class="user-name">{{ currentUser?.name || "Visitante" }}</p>
+            <p class="user-email">{{ currentUser?.email || "Não autenticado" }}</p>
           </div>
         </div>
 
@@ -273,9 +285,23 @@ const merchantLinks = [
 
         <!-- Footer -->
         <div class="sidebar-footer">
-          <button type="button" class="logout-btn" @click="handleLogout">
+          <button
+            v-if="currentUser"
+            type="button"
+            class="logout-btn"
+            @click="handleLogout"
+          >
             <SvgIcon name="log-out" :size="16" />
             <span>Sair da conta</span>
+          </button>
+          <button
+            v-else
+            type="button"
+            class="logout-btn"
+            @click="navigateTo('/login')"
+          >
+            <SvgIcon name="user" :size="16" />
+            <span>Entrar na conta</span>
           </button>
         </div>
       </aside>

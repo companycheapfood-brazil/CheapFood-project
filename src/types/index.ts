@@ -12,8 +12,11 @@ export interface AuctionBid {
  * Datas em ISO UTC.
  */
 export interface AuctionInfo {
+  active?: boolean;
   startPrice: number;
+  minPrice?: number;
   highestBid: number;
+  startTime?: string | null;
   endTime: string;
   bids: AuctionBid[];
   /** ID (string) do usuário com o maior lance, ou null se não houver lances. */
@@ -53,6 +56,10 @@ export interface Review {
   initials?: string;
   rating: number;
   comment: string;
+  tags?: string[];
+  merchantReply?: string | null;
+  productName?: string;
+  dateFormatted?: string;
 }
 
 export interface CartItem {

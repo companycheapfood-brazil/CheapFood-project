@@ -22,68 +22,90 @@ export interface StoreInfo {
   notificationsEnabled: boolean;
 }
 
-export const useMerchantStore = defineStore("merchant", () => {
-  const products = ref<MerchantProduct[]>([]);
-  const orders = ref<Order[]>([]);
-  const stats = ref({
+function createDefaultStats() {
+  return {
     revenueRecovered: 0,
     activeProducts: 0,
     expiringSoon: 0,
     reservations: 0,
+    completedOrdersCount: 0,
     dailySales: [] as { label: string; value: number }[],
-    growth: "+18%" as string | number,
-    storeName: "Padaria & Empório Central",
-    plan: "monthly" as "free" | "monthly" | "annual",
+    growth: "0%" as string | number,
+    storeName: "",
+    plan: "free" as "free" | "monthly" | "annual",
     itemsSaved: 0,
     foodSavedKg: 0,
     co2AvoidedKg: 0,
-    ratingAverage: 5.0,
+    ratingAverage: 0,
     ratingCount: 0,
     recentReviews: [] as any[],
-  });
+  };
+}
 
-  const storeInfo = ref<StoreInfo>({
-    name: "Padaria & Empório Central",
+function createDefaultStoreInfo(): StoreInfo {
+  return {
+    name: "",
     category: "Padaria e Confeitaria",
-    cnpj: "12.345.678/0001-90",
-    email: "contato@padariacentral.com.br",
-    phone: "(14) 3433-1020",
-    address: "Rua São Paulo, 100 - Centro",
-    city: "Marília",
-    state: "SP",
-    cep: "17500-010",
-    openingHours: "Seg a Sáb: 08:00 às 20:00",
-    plan: "monthly",
-    paymentMethods: "PIX, Cartão de Crédito/Débito e Dinheiro",
+    cnpj: "",
+    email: "",
+    phone: "",
+    address: "",
+    city: "",
+    state: "",
+    cep: "",
+    openingHours: "",
+    plan: "free",
+    paymentMethods: "PIX, Cartão de Crédito, Cartão de Débito, Dinheiro",
     notificationsEnabled: true,
-  });
+  };
+}
+
+export const useMerchantStore = defineStore("merchant", () => {
+  const products = ref<MerchantProduct[]>([]);
+  const orders = ref<Order[]>([]);
+  const stats = ref(createDefaultStats());
+  const storeInfo = ref<StoreInfo>(createDefaultStoreInfo());
+  const lastError = ref("");
+  let statsRequestSeq = 0;
 
   const toastStore = useToastStore();
 
+  function resetState() {
+    statsRequestSeq += 1;
+    products.value = [];
+    orders.value = [];
+    stats.value = createDefaultStats();
+    storeInfo.value = createDefaultStoreInfo();
+    lastError.value = "";
+  }
+
   async function fetchDashboardStats(period?: string) {
+    const seq = ++statsRequestSeq;
     try {
       const url = period
-        ? `${API_URL}/merchant/stats?period=${period}`
+        ? `${API_URL}/merchant/stats?period=${encodeURIComponent(period)}`
         : `${API_URL}/merchant/stats`;
       const res = await fetch(url, { headers: { ...authHeaders() } });
       if (handleUnauthorized(res.status)) return;
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (seq !== statsRequestSeq) return;
         stats.value = {
-          revenueRecovered: data.revenueRecovered ?? 0,
-          activeProducts: data.activeProducts ?? 0,
-          expiringSoon: data.expiringSoon ?? 0,
-          reservations: data.reservations ?? 0,
-          dailySales: data.dailySales ?? [],
-          growth: data.growth ?? "+18%",
+          revenueRecovered: Number(data.revenueRecovered ?? 0) || 0,
+          activeProducts: Number(data.activeProducts ?? 0) || 0,
+          expiringSoon: Number(data.expiringSoon ?? 0) || 0,
+          reservations: Number(data.reservations ?? 0) || 0,
+          completedOrdersCount: Number(data.completedOrdersCount ?? 0) || 0,
+          dailySales: Array.isArray(data.dailySales) ? data.dailySales : [],
+          growth: data.growth ?? "0%",
           storeName: data.storeName || storeInfo.value.name,
           plan: data.plan || storeInfo.value.plan,
-          itemsSaved: data.itemsSaved ?? 0,
-          foodSavedKg: data.foodSavedKg ?? 0,
-          co2AvoidedKg: data.co2AvoidedKg ?? 0,
-          ratingAverage: data.ratingAverage ?? 5.0,
-          ratingCount: data.ratingCount ?? 0,
-          recentReviews: data.recentReviews ?? [],
+          itemsSaved: Number(data.itemsSaved ?? 0) || 0,
+          foodSavedKg: Number(data.foodSavedKg ?? 0) || 0,
+          co2AvoidedKg: Number(data.co2AvoidedKg ?? 0) || 0,
+          ratingAverage: Number(data.ratingAverage ?? 0) || 0,
+          ratingCount: Number(data.ratingCount ?? 0) || 0,
+          recentReviews: Array.isArray(data.recentReviews) ? data.recentReviews : [],
         };
         if (data.storeName) storeInfo.value.name = data.storeName;
         if (data.plan) storeInfo.value.plan = data.plan;
@@ -100,13 +122,14 @@ export const useMerchantStore = defineStore("merchant", () => {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ reply }),
       });
-      const data = await res.json();
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toastStore.addToast(data.message || "Erro ao responder avaliação", "error");
         return false;
       }
       const idx = stats.value.recentReviews.findIndex((r: any) => r.id === reviewId);
-      if (idx >= 0) {
+      if (idx >= 0 && data.review) {
         stats.value.recentReviews[idx] = data.review;
       }
       toastStore.addToast(data.message || "Resposta enviada com sucesso!", "success");
@@ -124,10 +147,12 @@ export const useMerchantStore = defineStore("merchant", () => {
       });
       if (handleUnauthorized(res.status)) return;
       if (res.ok) {
-        const data = await res.json();
-        storeInfo.value = data;
-        stats.value.storeName = data.name;
-        stats.value.plan = data.plan;
+        const data = await res.json().catch(() => null);
+        if (data) {
+          storeInfo.value = data;
+          stats.value.storeName = data.name || "";
+          stats.value.plan = data.plan || "free";
+        }
       }
     } catch (e) {
       console.error(e);
@@ -135,42 +160,50 @@ export const useMerchantStore = defineStore("merchant", () => {
   }
 
   async function updateStoreInfo(payload: Partial<StoreInfo>) {
+    lastError.value = "";
     try {
       const res = await fetch(`${API_URL}/merchant/store`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.store) {
         storeInfo.value = data.store;
         stats.value.storeName = data.store.name;
         stats.value.plan = data.store.plan;
         return true;
       }
+      lastError.value = data.message || "Não foi possível salvar os dados do estabelecimento.";
       return false;
     } catch (e) {
       console.error(e);
+      lastError.value = "Erro de conexão ao salvar os dados.";
       return false;
     }
   }
 
   async function updatePlan(plan: "free" | "monthly" | "annual") {
+    lastError.value = "";
     try {
       const res = await fetch(`${API_URL}/merchant/plan`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ plan }),
       });
-      const data = await res.json();
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.store) {
         storeInfo.value = data.store;
         stats.value.plan = data.store.plan;
         return true;
       }
+      lastError.value = data.message || "Erro ao atualizar plano.";
       return false;
     } catch (e) {
       console.error(e);
+      lastError.value = "Erro de conexão ao atualizar plano.";
       return false;
     }
   }
@@ -182,7 +215,8 @@ export const useMerchantStore = defineStore("merchant", () => {
       });
       if (handleUnauthorized(res.status)) return;
       if (res.ok) {
-        products.value = await res.json();
+        const data = await res.json().catch(() => []);
+        products.value = Array.isArray(data) ? data : [];
       }
     } catch (e) {
       console.error(e);
@@ -196,7 +230,8 @@ export const useMerchantStore = defineStore("merchant", () => {
       });
       if (handleUnauthorized(res.status)) return;
       if (res.ok) {
-        orders.value = await res.json();
+        const data = await res.json().catch(() => []);
+        orders.value = Array.isArray(data) ? data : [];
       }
     } catch (e) {
       console.error(e);
@@ -209,18 +244,26 @@ export const useMerchantStore = defineStore("merchant", () => {
         method: "PATCH",
         headers: { ...authHeaders() },
       });
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         const product = products.value.find((p) => p.id === id);
+        const nextPaused = typeof data.paused === "boolean" ? data.paused : !(product?.paused ?? false);
         if (product) {
-          product.paused = !product.paused;
-          toastStore.addToast(
-            `Produto ${product.paused ? "pausado na vitrine" : "reativado na vitrine"}`,
-            "info",
-          );
+          product.paused = nextPaused;
         }
+        toastStore.addToast(
+          `Produto ${nextPaused ? "pausado na vitrine" : "reativado na vitrine"}`,
+          "info",
+        );
+        return true;
       }
+      toastStore.addToast(data.message || "Não foi possível alterar o status do produto.", "error");
+      return false;
     } catch (e) {
       console.error(e);
+      toastStore.addToast("Erro de conexão ao atualizar produto.", "error");
+      return false;
     }
   }
 
@@ -231,14 +274,17 @@ export const useMerchantStore = defineStore("merchant", () => {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ percent }),
       });
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         await fetchProducts();
         return true;
-      } else {
-        return false;
       }
+      lastError.value = data.message || "Erro ao aplicar desconto.";
+      return false;
     } catch (e) {
       console.error(e);
+      lastError.value = "Erro de conexão ao aplicar desconto.";
       return false;
     }
   }
@@ -248,12 +294,15 @@ export const useMerchantStore = defineStore("merchant", () => {
   }
 
   async function confirmPickup(orderId: string) {
+    lastError.value = "";
     try {
       const res = await fetch(`${API_URL}/merchant/orders/${orderId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ status: "retirado" }),
       });
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         const order = orders.value.find((o) => o.id === orderId);
         if (order) {
@@ -261,19 +310,26 @@ export const useMerchantStore = defineStore("merchant", () => {
         }
         return true;
       }
+      lastError.value = data.message || "Não foi possível confirmar a retirada.";
+      toastStore.addToast(lastError.value, "error");
     } catch (e) {
       console.error(e);
+      lastError.value = "Erro de conexão ao confirmar retirada.";
+      toastStore.addToast(lastError.value, "error");
     }
     return false;
   }
 
   async function cancelOrder(orderId: string) {
+    lastError.value = "";
     try {
       const res = await fetch(`${API_URL}/merchant/orders/${orderId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ status: "expirado" }),
       });
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         const order = orders.value.find((o) => o.id === orderId);
         if (order) {
@@ -281,28 +337,32 @@ export const useMerchantStore = defineStore("merchant", () => {
         }
         return true;
       }
+      lastError.value = data.message || "Não foi possível cancelar o pedido.";
+      toastStore.addToast(lastError.value, "error");
     } catch (e) {
       console.error(e);
+      lastError.value = "Erro de conexão ao cancelar o pedido.";
+      toastStore.addToast(lastError.value, "error");
     }
     return false;
   }
 
-  async function validateOrderPin(code: string, confirm = false) {
+  async function validateOrderPin(code: string, confirm = false, period?: string) {
     try {
       const res = await fetch(`${API_URL}/merchant/orders/validate-pin`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ code, confirm }),
       });
-      const data = await res.json();
+      if (handleUnauthorized(res.status)) return null;
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toastStore.addToast(data.message || "Código PIN não encontrado", "error");
         return null;
       }
       if (confirm) {
         toastStore.addToast(data.message || "Retirada confirmada!", "success");
-        await fetchOrders();
-        await fetchDashboardStats();
+        await Promise.all([fetchOrders(), fetchDashboardStats(period)]);
       }
       return data;
     } catch (e) {
@@ -318,7 +378,8 @@ export const useMerchantStore = defineStore("merchant", () => {
         method: "POST",
         headers: { ...authHeaders() },
       });
-      const data = await res.json();
+      if (handleUnauthorized(res.status)) return false;
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         await Promise.all([
           fetchDashboardStats(),
@@ -366,12 +427,14 @@ export const useMerchantStore = defineStore("merchant", () => {
     orders,
     stats,
     storeInfo,
+    lastError,
     activeProducts,
     expiredProducts,
     soldProducts,
     pendingOrders,
     pickedUpOrders,
     expiredOrders,
+    resetState,
     fetchDashboardStats,
     fetchStoreInfo,
     updateStoreInfo,

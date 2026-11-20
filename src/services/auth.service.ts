@@ -1,5 +1,6 @@
 import axios from "axios";
 import { API_URL } from "@/config/api";
+import { bumpSessionVersion, clearAuthStorage } from "@/utils/auth";
 
 const AUTH_API = `${API_URL}/auth/`;
 
@@ -11,9 +12,11 @@ class AuthService {
         password: user.password,
       })
       .then((response) => {
-        if (response.data.token) {
-          localStorage.setItem("user", JSON.stringify(response.data));
+        if (!response.data?.token || !response.data?.user) {
+          throw new Error("Resposta inválida do servidor ao autenticar.");
         }
+        localStorage.setItem("user", JSON.stringify(response.data));
+        bumpSessionVersion();
         return response.data;
       });
   }
@@ -24,7 +27,7 @@ class AuthService {
     } catch (e) {
       console.error("Logout error:", e);
     } finally {
-      localStorage.removeItem("user");
+      clearAuthStorage();
     }
   }
 

@@ -13,30 +13,60 @@ const search = ref("");
 const sortBy = ref<"forYou" | "price_asc" | "discount">("forYou");
 const allProducts = ref<any[]>([]);
 const topCategories = ref<string[]>(["Laticínios", "Padaria", "Frios", "Bebidas"]);
+const isLoading = ref(true);
+const loadError = ref("");
 
 const quickChips = ["Nutella", "Leite", "Queijo", "Iogurte", "Padaria", "Laticínios"];
+const REAL_CATEGORIES = new Set([
+  "Laticínios",
+  "Padaria",
+  "Frios",
+  "Hortifruti",
+  "Bebidas",
+  "Carnes",
+  "Congelados",
+  "Outros",
+]);
 
-onMounted(async () => {
-  favoritesStore.fetchFavorites();
+async function loadProducts() {
+  isLoading.value = true;
+  loadError.value = "";
   try {
-    const rec = await ShopService.getRecommendations();
-    if (rec && rec.rankedProducts && rec.rankedProducts.length > 0) {
-      allProducts.value = rec.rankedProducts;
-      if (rec.topCategories?.length) topCategories.value = rec.topCategories;
-      return;
+    favoritesStore.fetchFavorites();
+    try {
+      const rec = await ShopService.getRecommendations();
+      if (rec && Array.isArray(rec.rankedProducts) && rec.rankedProducts.length > 0) {
+        allProducts.value = rec.rankedProducts.filter(
+          (p: any) => !String(p.expires_in || "").includes("Vencido"),
+        );
+        if (rec.topCategories?.length) topCategories.value = rec.topCategories;
+        return;
+      }
+    } catch {
+      // fallback para /api/products
     }
+    const prods = await ShopService.getProducts();
+    const list = Array.isArray(prods) ? prods : [];
+    allProducts.value = list.filter(
+      (p: any) => !String(p.expires_in || "").includes("Vencido"),
+    );
   } catch {
-    // fallback
+    loadError.value = "Não foi possível carregar as ofertas. Tente novamente.";
+  } finally {
+    isLoading.value = false;
   }
-  allProducts.value = await ShopService.getProducts();
-});
+}
+
+onMounted(loadProducts);
 
 function applyQuickChip(term: string) {
   if (search.value.toLowerCase() === term.toLowerCase()) {
     search.value = "";
   } else {
     search.value = term;
-    ShopService.trackPreference(term);
+    if (REAL_CATEGORIES.has(term)) {
+      ShopService.trackPreference(term);
+    }
   }
 }
 
@@ -45,20 +75,21 @@ const results = computed(() => {
   const list = allProducts.value.filter(
     (p) =>
       !q ||
-      p.name.toLowerCase().includes(q) ||
-      (p.category && p.category.toLowerCase().includes(q)) ||
-      (p.store && p.store.toLowerCase().includes(q)),
+      String(p.name || "").toLowerCase().includes(q) ||
+      String(p.category || "").toLowerCase().includes(q) ||
+      String(p.store || "").toLowerCase().includes(q) ||
+      String(p.description || "").toLowerCase().includes(q),
   );
   if (sortBy.value === "forYou") {
     return [...list].sort((a, b) => (b.affinityScore ?? 0) - (a.affinityScore ?? 0));
   }
   if (sortBy.value === "price_asc") {
-    return [...list].sort((a, b) => a.price - b.price);
+    return [...list].sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
   }
   if (sortBy.value === "discount") {
     return [...list].sort((a, b) => {
-      const discA = a.old_price ? (a.old_price - a.price) / a.old_price : 0;
-      const discB = b.old_price ? (b.old_price - b.price) / b.old_price : 0;
+      const discA = a.old_price > 0 ? (a.old_price - a.price) / a.old_price : 0;
+      const discB = b.old_price > 0 ? (b.old_price - b.price) / b.old_price : 0;
       return discB - discA;
     });
   }
@@ -148,21 +179,43 @@ const results = computed(() => {
       </div>
 
       <div class="product-list">
-        <ProductCard
-          v-for="p in results"
-          :key="p.id"
-          :product="p"
-          :showReason="sortBy === 'forYou'"
-        />
-        <div v-if="results.length === 0" class="empty-box">
-          <span class="empty-icon">
-            <SvgIcon name="search" :size="28" />
-          </span>
-          <p class="empty">Nenhum produto encontrado para "{{ search }}".</p>
-          <button class="reset-search-btn" @click="search = ''">
-            Limpar busca
+        <div v-if="isLoading" class="empty-box">
+          <p class="empty">Carregando ofertas...</p>
+        </div>
+        <div v-else-if="loadError" class="empty-box">
+          <p class="empty">{{ loadError }}</p>
+          <button type="button" class="reset-search-btn" @click="loadProducts">
+            Tentar novamente
           </button>
         </div>
+        <template v-else>
+          <ProductCard
+            v-for="p in results"
+            :key="p.id"
+            :product="p"
+            :showReason="sortBy === 'forYou'"
+          />
+          <div v-if="results.length === 0" class="empty-box">
+            <span class="empty-icon">
+              <SvgIcon name="search" :size="28" />
+            </span>
+            <p class="empty">
+              {{
+                search.trim()
+                  ? `Nenhum produto encontrado para "${search.trim()}".`
+                  : "Nenhuma oferta disponível no momento."
+              }}
+            </p>
+            <button
+              v-if="search.trim()"
+              type="button"
+              class="reset-search-btn"
+              @click="search = ''"
+            >
+              Limpar busca
+            </button>
+          </div>
+        </template>
       </div>
     </main>
 

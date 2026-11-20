@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
 import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
@@ -14,7 +14,7 @@ const route = useRoute();
 const toast = useToastStore();
 const merchantStore = useMerchantStore();
 
-const productId = route.params.id;
+const productId = String(route.params.id || "");
 
 const form = ref({
   nome: "",
@@ -30,70 +30,148 @@ const isAuction = ref(false);
 const auctionStartPrice = ref<number | "">("");
 const auctionDurationValue = ref<number | "">(2);
 const auctionDurationUnit = ref<"minutes" | "hours" | "days">("hours");
+const originalAuctionEndTime = ref<string | null>(null);
+const auctionDurationTouched = ref(false);
+const hasEndedWinnerAuction = ref(false);
 
 const file = ref<File | null>(null);
 const previewUrl = ref<string | null>(null);
+const isFetching = ref(true);
 const isLoading = ref(false);
+const isNormalizingImage = ref(false);
+let activeBlobUrl: string | null = null;
+
+function revokeActiveBlob() {
+  if (activeBlobUrl) {
+    URL.revokeObjectURL(activeBlobUrl);
+    activeBlobUrl = null;
+  }
+}
+
+onUnmounted(() => {
+  revokeActiveBlob();
+});
 
 const discountPercent = computed(() => {
-  if (!form.value.preco_original || !form.value.preco_desconto || form.value.preco_original <= 0)
+  const orig = Number(form.value.preco_original);
+  const promo = Number(form.value.preco_desconto);
+  if (!Number.isFinite(orig) || !Number.isFinite(promo) || orig <= 0 || promo <= 0)
     return 0;
-  const pct =
-    ((form.value.preco_original - form.value.preco_desconto) / form.value.preco_original) * 100;
+  const pct = ((orig - promo) / orig) * 100;
   return Math.max(0, Math.round(pct));
 });
 
 onMounted(async () => {
+  isFetching.value = true;
   try {
-    const res = await fetch(`${API_URL}/products/${productId}`);
-    if (res.ok) {
-      const data = await res.json();
-      form.value = {
-        nome: data.name,
-        descricao: data.description || "",
-        categoria: data.category || "Padaria",
-        preco_original: data.originalPrice,
-        preco_desconto: data.price,
-        quantidade: data.quantity,
-        data_validade: data.validity,
-      };
-      if (data.auction && data.auction.active) {
+    const res = await fetch(`${API_URL}/products/${encodeURIComponent(productId)}`, {
+      headers: authHeaders(),
+    });
+    if (handleUnauthorized(res.status)) return;
+    if (!res.ok) {
+      toast.addToast("Produto não encontrado.", "error");
+      router.push("/comerciante/produtos");
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    if (!data || !data.id) {
+      toast.addToast("Produto não encontrado.", "error");
+      router.push("/comerciante/produtos");
+      return;
+    }
+
+    form.value = {
+      nome: data.name || "",
+      descricao: data.description || "",
+      categoria: data.category || "Padaria",
+      preco_original: Number(data.originalPrice ?? data.old_price ?? 0) || 0,
+      preco_desconto: Number(data.price ?? 0) || 0,
+      quantidade: Number(data.quantity ?? 0) || 0,
+      data_validade: data.validity || "",
+    };
+
+    if (data.auction) {
+      const endedWithWinner = Boolean(data.auction.ended && data.auction.winnerId);
+      hasEndedWinnerAuction.value = endedWithWinner;
+      if (data.auction.active && !data.auction.ended) {
         isAuction.value = true;
-        auctionStartPrice.value = data.auction.startPrice ?? "";
+        auctionStartPrice.value = Number(data.auction.startPrice ?? 0) || "";
         if (data.auction.endTime) {
-          const remainingMs = new Date(data.auction.endTime).getTime() - Date.now();
-          const remainingHours = Math.max(1, Math.round(remainingMs / (1000 * 60 * 60)));
-          auctionDurationValue.value = remainingHours;
-          auctionDurationUnit.value = "hours";
+          originalAuctionEndTime.value = data.auction.endTime;
+          const endMs = Date.parse(data.auction.endTime);
+          if (Number.isFinite(endMs)) {
+            const remainingMs = endMs - Date.now();
+            const remainingHours = Math.max(1, Math.round(remainingMs / (1000 * 60 * 60)));
+            auctionDurationValue.value = remainingHours;
+            auctionDurationUnit.value = "hours";
+          }
         }
       }
-      const img = data.image || data.imagem || data.icon;
-      if (isImageUrl(img)) {
-        previewUrl.value = resolveImageUrl(img);
-      }
     }
-  } catch (e) {
+
+    const img = data.image || data.imagem || data.icon;
+    if (isImageUrl(img)) {
+      previewUrl.value = resolveImageUrl(img);
+    }
+  } catch {
     toast.addToast("Erro ao carregar produto", "error");
+    router.push("/comerciante/produtos");
+  } finally {
+    isFetching.value = false;
   }
 });
 
 async function handleFile(e: Event) {
   const target = e.target as HTMLInputElement;
-  if (target.files && target.files[0]) {
-    const rawFile = target.files[0];
-    previewUrl.value = URL.createObjectURL(rawFile);
+  const rawFile = target.files?.[0];
+  if (!rawFile) return;
+
+  isNormalizingImage.value = true;
+  try {
+    revokeActiveBlob();
+    activeBlobUrl = URL.createObjectURL(rawFile);
+    previewUrl.value = activeBlobUrl;
     file.value = await normalizeImageFile(rawFile);
+  } catch {
+    toast.addToast("Não foi possível processar esta imagem.", "error");
+  } finally {
+    isNormalizingImage.value = false;
   }
 }
 
 async function saveProduct() {
+  if (isLoading.value || isNormalizingImage.value) return;
+
+  const orig = Number(form.value.preco_original);
+  const promo = Number(form.value.preco_desconto);
+  const qty = Math.floor(Number(form.value.quantidade));
+
+  if (!form.value.nome.trim() || !form.value.data_validade) {
+    toast.addToast("Preencha nome e data de validade.", "error");
+    return;
+  }
+  if (!Number.isFinite(orig) || orig <= 0 || !Number.isFinite(promo) || promo <= 0) {
+    toast.addToast("Informe preços válidos maiores que zero.", "error");
+    return;
+  }
+  if (promo > orig) {
+    toast.addToast("O preço promocional não pode ser maior que o preço original.", "error");
+    return;
+  }
+  if (!Number.isFinite(qty) || qty < 0) {
+    toast.addToast("A quantidade disponível não pode ser negativa.", "error");
+    return;
+  }
+
   if (isAuction.value) {
-    if (!auctionStartPrice.value || !auctionDurationValue.value) {
+    const start = Number(auctionStartPrice.value);
+    const dur = Math.floor(Number(auctionDurationValue.value));
+    if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(dur) || dur < 1) {
       toast.addToast("Preencha o lance inicial e o tempo de duração do leilão!", "error");
       return;
     }
-    if (Number(auctionStartPrice.value) > Number(form.value.preco_desconto)) {
-      toast.addToast("O lance inicial não pode ser maior que o preço de compra imediata.", "error");
+    if (start >= promo) {
+      toast.addToast("O lance inicial deve ser menor que o preço de compra imediata.", "error");
       return;
     }
   }
@@ -101,29 +179,33 @@ async function saveProduct() {
   isLoading.value = true;
   try {
     const formData = new FormData();
-    formData.append("nome", form.value.nome);
-    formData.append("descricao", form.value.descricao);
+    formData.append("nome", form.value.nome.trim().slice(0, 150));
+    formData.append("descricao", form.value.descricao.trim());
     formData.append("categoria", form.value.categoria);
-    formData.append("preco_original", String(form.value.preco_original));
-    formData.append("preco_desconto", String(form.value.preco_desconto));
-    formData.append("quantidade", String(form.value.quantidade));
+    formData.append("preco_original", String(orig));
+    formData.append("preco_desconto", String(promo));
+    formData.append("quantidade", String(qty));
     formData.append("data_validade", form.value.data_validade);
 
     if (isAuction.value) {
       formData.append("modo", "LEILAO");
-      formData.append("preco_inicial", String(auctionStartPrice.value));
-      formData.append("preco_minimo", String(form.value.preco_desconto));
+      formData.append("preco_inicial", String(Number(auctionStartPrice.value)));
+      formData.append("preco_minimo", String(promo));
 
-      const now = new Date();
-      const val = Number(auctionDurationValue.value);
-      if (auctionDurationUnit.value === "minutes") {
-        now.setMinutes(now.getMinutes() + val);
-      } else if (auctionDurationUnit.value === "hours") {
-        now.setHours(now.getHours() + val);
-      } else if (auctionDurationUnit.value === "days") {
-        now.setDate(now.getDate() + val);
+      if (originalAuctionEndTime.value && !auctionDurationTouched.value) {
+        formData.append("data_fim_leilao", originalAuctionEndTime.value);
+      } else {
+        const now = new Date();
+        const val = Math.floor(Number(auctionDurationValue.value));
+        if (auctionDurationUnit.value === "minutes") {
+          now.setMinutes(now.getMinutes() + val);
+        } else if (auctionDurationUnit.value === "hours") {
+          now.setHours(now.getHours() + val);
+        } else if (auctionDurationUnit.value === "days") {
+          now.setDate(now.getDate() + val);
+        }
+        formData.append("data_fim_leilao", now.toISOString());
       }
-      formData.append("data_fim_leilao", now.toISOString());
     } else {
       formData.append("modo", "FIXO");
     }
@@ -132,7 +214,7 @@ async function saveProduct() {
       formData.append("imagem", file.value);
     }
 
-    const res = await fetch(`${API_URL}/products/${productId}`, {
+    const res = await fetch(`${API_URL}/products/${encodeURIComponent(productId)}`, {
       method: "PUT",
       headers: {
         ...authHeaders(),
@@ -168,7 +250,10 @@ async function saveProduct() {
     />
 
     <main class="content">
-      <form class="form" @submit.prevent="saveProduct">
+      <div v-if="isFetching" class="form-section" style="text-align: center; padding: 32px;">
+        <p style="color: var(--mc-text-muted); font-weight: 600;">Carregando dados do produto...</p>
+      </div>
+      <form v-else class="form" @submit.prevent="saveProduct">
         <div class="form-section">
           <h3 class="section-title">Informações Básicas</h3>
           <label class="field">
@@ -176,6 +261,7 @@ async function saveProduct() {
             <input
               v-model="form.nome"
               type="text"
+              maxlength="150"
               placeholder="Ex: Leite Integral 1L"
               required
             />
@@ -237,9 +323,12 @@ async function saveProduct() {
             <label class="toggle-label">
               <input type="checkbox" v-model="isAuction" />
               <span class="slider"></span>
-              <span class="toggle-text">Habilitar Leilão Híbrido (Lances + Compra Imediata) 🔨</span>
+              <span class="toggle-text">Habilitar Leilão Híbrido (Lances + Compra Imediata)</span>
             </label>
-            <p class="mode-hint" v-if="isAuction">
+            <p class="mode-hint" v-if="hasEndedWinnerAuction && !isAuction">
+              Este produto possui um leilão encerrado com vencedor aguardando resgate (será preservado ao salvar).
+            </p>
+            <p class="mode-hint" v-else-if="isAuction">
               Os clientes poderão dar lances a partir de um valor mínimo OU comprar imediatamente pelo preço promocional.
             </p>
           </div>
@@ -293,8 +382,13 @@ async function saveProduct() {
                   placeholder="2"
                   style="width: 70px"
                   required
+                  @input="auctionDurationTouched = true"
                 />
-                <select v-model="auctionDurationUnit" style="flex: 1">
+                <select
+                  v-model="auctionDurationUnit"
+                  style="flex: 1"
+                  @change="auctionDurationTouched = true"
+                >
                   <option value="minutes">Minutos</option>
                   <option value="hours">Horas</option>
                   <option value="days">Dias</option>
@@ -321,8 +415,8 @@ async function saveProduct() {
           </div>
         </div>
 
-        <button type="submit" class="publish-btn" :disabled="isLoading">
-          {{ isLoading ? "Salvando..." : "Salvar alterações" }}
+        <button type="submit" class="publish-btn" :disabled="isLoading || isNormalizingImage">
+          {{ isLoading ? "Salvando..." : isNormalizingImage ? "Preparando imagem..." : "Salvar alterações" }}
         </button>
       </form>
     </main>

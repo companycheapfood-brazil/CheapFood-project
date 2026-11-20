@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import HomeView from "@/views/shop/HomeView.vue";
+import { normalizeUserRole } from "@/utils/auth";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -164,7 +165,7 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, _from, next) => {
   const publicPages = [
     "/start",
     "/login",
@@ -172,19 +173,21 @@ router.beforeEach((to, from, next) => {
     "/forgot-password",
     "/reset-password",
   ];
-  const authRequired = !publicPages.includes(to.path);
+  const normalizedPath = to.path.length > 1 ? to.path.replace(/\/+$/, "") : to.path;
+  const authRequired = !publicPages.includes(normalizedPath);
 
   const userStr = localStorage.getItem("user");
-  let user = null;
+  let user: any = null;
   if (userStr) {
     try {
       const parsed = JSON.parse(userStr);
-      if (parsed && parsed.token) {
-        user = parsed.user || parsed;
+      const candidate = parsed?.user || parsed;
+      if (parsed && parsed.token && candidate && candidate.id != null) {
+        user = candidate;
       } else {
         localStorage.removeItem("user");
       }
-    } catch (e) {
+    } catch {
       localStorage.removeItem("user");
     }
   }
@@ -195,34 +198,49 @@ router.beforeEach((to, from, next) => {
 
   // Controle de Acesso por Tipo de Perfil (CLIENTE vs COMERCIANTE)
   if (user) {
-    const isMerchantRoute = to.path.startsWith("/comerciante");
-    const isPublic = publicPages.includes(to.path);
+    const role = normalizeUserRole(user);
+    const isMerchantRoute = normalizedPath.startsWith("/comerciante");
+    const isPublic = publicPages.includes(normalizedPath);
 
-    // Se logado e tentar acessar login, redireciona
+    // Se logado e tentar acessar login/start, redireciona para a área do perfil
     if (isPublic) {
-      return next(user.role === "merchant" ? "/comerciante" : "/");
+      return next(role === "merchant" ? "/comerciante" : "/");
     }
 
-    if (isMerchantRoute && user.role !== "merchant") {
-      // Segurança: Cliente tentando acessar área de comerciante
+    if (isMerchantRoute && role !== "merchant") {
       return next("/");
     }
 
-    // Segurança: Lojista não deve navegar nas telas de compra do consumidor
-    // Perfis permitidos compartilhados: /perfil (minha conta)
+    // Lojista não deve navegar nas telas de compra, favoritos ou histórico do consumidor
     const isConsumerRoute =
-      to.path === "/" ||
-      to.path.startsWith("/produto") ||
-      to.path.startsWith("/carrinho") ||
-      to.path.startsWith("/buscar") ||
-      to.path.startsWith("/comprovante");
+      normalizedPath === "/" ||
+      normalizedPath.startsWith("/produto") ||
+      normalizedPath.startsWith("/carrinho") ||
+      normalizedPath.startsWith("/buscar") ||
+      normalizedPath.startsWith("/comprovante") ||
+      normalizedPath === "/perfil/favoritos" ||
+      normalizedPath === "/perfil/historico";
 
-    if (isConsumerRoute && user.role === "merchant") {
+    if (isConsumerRoute && role === "merchant") {
       return next("/comerciante");
     }
   }
 
   next();
+});
+
+router.onError((err) => {
+  const msg = String(err?.message || "");
+  if (
+    msg.includes("Failed to fetch dynamically imported module") ||
+    msg.includes("Importing a module script failed")
+  ) {
+    const key = "cf_router_chunk_reloaded";
+    if (!sessionStorage.getItem(key)) {
+      sessionStorage.setItem(key, "1");
+      window.location.reload();
+    }
+  }
 });
 
 export default router;

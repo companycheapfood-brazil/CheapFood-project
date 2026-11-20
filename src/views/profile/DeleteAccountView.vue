@@ -5,20 +5,31 @@ import BottomNav from "@/components/BottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import AuthService from "@/services/auth.service";
 import { API_URL } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
 import { useToastStore } from "@/stores/useToastStore";
+import { useCartStore } from "@/stores/useCartStore";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
+import { useMerchantStore } from "@/stores/useMerchantStore";
 
 const router = useRouter();
 const toast = useToastStore();
+const cartStore = useCartStore();
+const favoritesStore = useFavoritesStore();
+const merchantStore = useMerchantStore();
 const password = ref("");
 const isDeleting = ref(false);
+const showConfirmModal = ref(false);
 
-const deleteAccount = async () => {
+const requestDelete = () => {
   if (!password.value) {
     toast.addToast("Por favor, digite sua senha.", "error");
     return;
   }
+  showConfirmModal.value = true;
+};
 
+const confirmDeleteAccount = async () => {
+  if (isDeleting.value) return;
   isDeleting.value = true;
   try {
     const res = await fetch(`${API_URL}/profile`, {
@@ -30,15 +41,22 @@ const deleteAccount = async () => {
       body: JSON.stringify({ password: password.value }),
     });
 
+    if (handleUnauthorized(res.status)) return;
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
+      showConfirmModal.value = false;
+      cartStore.resetSession();
+      favoritesStore.resetState();
+      merchantStore.resetState();
       toast.addToast("Conta excluída com sucesso.", "success");
       await AuthService.logout();
       router.push("/start");
     } else {
+      showConfirmModal.value = false;
       toast.addToast(data.message || "Erro ao excluir conta", "error");
     }
-  } catch (e) {
+  } catch {
+    showConfirmModal.value = false;
     toast.addToast("Erro de conexão ao excluir conta", "error");
   } finally {
     isDeleting.value = false;
@@ -49,7 +67,7 @@ const deleteAccount = async () => {
 <template>
   <div class="screen">
     <header class="delete-header">
-      <button class="back-btn" @click="router.push('/perfil')" aria-label="Voltar">
+      <button type="button" class="back-btn" @click="router.push('/perfil')" aria-label="Voltar">
         <SvgIcon name="arrow-left" :size="17" />
       </button>
       <h1 class="title">Excluir conta</h1>
@@ -77,18 +95,53 @@ const deleteAccount = async () => {
         </ul>
       </div>
 
-      <div class="form-group">
-        <label>Digite sua senha para confirmar</label>
-        <input type="password" v-model="password" placeholder="••••••••" />
-      </div>
+      <form @submit.prevent="requestDelete">
+        <div class="form-group">
+          <label>Digite sua senha para confirmar</label>
+          <input type="password" v-model="password" placeholder="••••••••" required />
+        </div>
 
-      <div class="actions">
-        <button class="btn-delete" :disabled="isDeleting" @click="deleteAccount">
-          {{ isDeleting ? "Excluindo..." : "Excluir minha conta" }}
-        </button>
-        <button class="btn-cancel" @click="router.push('/perfil')">Cancelar</button>
-      </div>
+        <div class="actions">
+          <button type="submit" class="btn-delete" :disabled="isDeleting">
+            {{ isDeleting ? "Excluindo..." : "Excluir minha conta" }}
+          </button>
+          <button type="button" class="btn-cancel" @click="router.push('/perfil')">Cancelar</button>
+        </div>
+      </form>
     </main>
+
+    <div
+      v-if="showConfirmModal"
+      class="confirm-overlay"
+      @click.self="!isDeleting && (showConfirmModal = false)"
+    >
+      <div class="confirm-card">
+        <h3 class="confirm-title">Confirmar exclusão permanente</h3>
+        <p class="confirm-desc">
+          Todos os seus dados serão removidos imediatamente. Deseja prosseguir?
+        </p>
+        <div class="confirm-actions">
+          <button
+            type="button"
+            class="btn-cancel"
+            style="padding: 0.85rem"
+            :disabled="isDeleting"
+            @click="showConfirmModal = false"
+          >
+            Voltar
+          </button>
+          <button
+            type="button"
+            class="btn-delete"
+            style="padding: 0.85rem"
+            :disabled="isDeleting"
+            @click="confirmDeleteAccount"
+          >
+            {{ isDeleting ? "Excluindo..." : "Sim, excluir" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <BottomNav />
   </div>
@@ -263,5 +316,47 @@ const deleteAccount = async () => {
   font-size: 1rem;
   font-weight: 800;
   cursor: pointer;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 16px;
+}
+
+.confirm-card {
+  width: 100%;
+  max-width: 340px;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.2);
+}
+
+.confirm-title {
+  margin: 0 0 8px 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #1f2937;
+}
+
+.confirm-desc {
+  margin: 0 0 18px 0;
+  font-size: 0.85rem;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 </style>

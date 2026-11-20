@@ -6,7 +6,7 @@ import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { useCartStore } from "@/stores/useCartStore";
 import { useToastStore } from "@/stores/useToastStore";
 import { useSidebarStore } from "@/stores/useSidebarStore";
-import { useAuctionClock } from "@/composables/useAuctionClock";
+import { formatBRL } from "@/composables/useAuctionClock";
 import { isImageUrl, resolveImageUrl } from "@/config/api";
 import ShopService from "@/services/shop.service";
 import { storeToRefs } from "pinia";
@@ -14,9 +14,9 @@ import { storeToRefs } from "pinia";
 const router = useRouter();
 const cartStore = useCartStore();
 const sidebarStore = useSidebarStore();
-const clock = useAuctionClock();
 const {
   items: cartItems,
+  totalItems,
   subtotal,
   totalSavings: savings,
 } = storeToRefs(cartStore);
@@ -26,11 +26,16 @@ const toastStore = useToastStore();
 const paymentMethod = ref<"pickup" | "pix">("pickup");
 const isSubmitting = ref(false);
 const recommendedPool = ref<any[]>([]);
+const brokenImages = ref<Record<string, boolean>>({});
+
+function markBroken(key: string) {
+  brokenImages.value[key] = true;
+}
 
 onMounted(async () => {
   try {
     const rec = await ShopService.getRecommendations();
-    if (rec && rec.forYou) {
+    if (rec && Array.isArray(rec.forYou)) {
       recommendedPool.value = rec.forYou;
     }
   } catch {
@@ -51,7 +56,8 @@ const checkout = async () => {
   try {
     const subVal = subtotal.value;
     const savVal = savings.value;
-    const code = await cartStore.checkout();
+    const payMode = paymentMethod.value === "pix" ? "pix" : "store";
+    const code = await cartStore.checkout(payMode);
     clearCart();
     router.push({
       path: "/comprovante",
@@ -92,7 +98,7 @@ const checkout = async () => {
           <p class="header-sub">Reserva garantida para retirada rápida</p>
         </div>
       </div>
-      <span class="header-badge">{{ cartItems.length }} itens</span>
+      <span class="header-badge">{{ totalItems }} {{ totalItems === 1 ? "item" : "itens" }}</span>
     </header>
 
     <main class="content">
@@ -117,21 +123,19 @@ const checkout = async () => {
         <div class="cart-item" v-for="item in cartItems" :key="item.product.id">
           <div class="item-img">
             <img
-              v-if="isImageUrl(item.product.image)"
+              v-if="isImageUrl(item.product.image) && !brokenImages['c-' + item.product.id]"
               :src="resolveImageUrl(item.product.image)"
+              :alt="item.product.name"
               class="real-image"
+              @error="markBroken('c-' + item.product.id)"
             />
-            <span v-else class="emoji-img" v-html="item.product.image"></span>
+            <span v-else-if="item.product.image && !isImageUrl(item.product.image)" class="emoji-img" v-html="item.product.image"></span>
+            <SvgIcon v-else name="shopping-bag" :size="22" style="color: #bfa47a" />
           </div>
           <div class="item-details">
             <h3 class="item-name">{{ item.product.name }}</h3>
             <p class="item-store">{{ item.product.store }}</p>
-            <p class="item-price">
-              R$
-              {{
-                clock.getCurrentPrice(item.product).toFixed(2).replace(".", ",")
-              }}
-            </p>
+            <p class="item-price">{{ formatBRL(item.product.price) }}</p>
           </div>
           <div class="quantity-selector">
             <button class="q-btn" @click="updateQuantity(item.product.id, -1)" aria-label="Diminuir">
@@ -161,15 +165,22 @@ const checkout = async () => {
             class="upsell-card"
           >
             <img
-              v-if="isImageUrl(sug.image)"
+              v-if="isImageUrl(sug.image) && !brokenImages['u-' + sug.id]"
               :src="resolveImageUrl(sug.image)"
+              :alt="sug.name"
               class="upsell-thumb"
+              @error="markBroken('u-' + sug.id)"
             />
+            <span
+              v-else
+              class="upsell-thumb"
+              style="display: inline-flex; align-items: center; justify-content: center; color: #bfa47a;"
+            >
+              <SvgIcon name="shopping-bag" :size="16" />
+            </span>
             <div class="upsell-info">
               <p class="upsell-name">{{ sug.name }}</p>
-              <strong class="upsell-price"
-                >R$ {{ sug.price.toFixed(2).replace(".", ",") }}</strong
-              >
+              <strong class="upsell-price">{{ formatBRL(sug.price) }}</strong>
             </div>
             <button
               type="button"

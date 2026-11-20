@@ -5,8 +5,9 @@ import BottomNav from "@/components/BottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import { useCartStore } from "@/stores/useCartStore";
 import { useToastStore } from "@/stores/useToastStore";
+import { formatBRL } from "@/composables/useAuctionClock";
 import { API_URL } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized } from "@/utils/auth";
 
 const router = useRouter();
 const route = useRoute();
@@ -20,23 +21,40 @@ const savings = ref(0);
 const storeName = ref("Padaria & Empório Central");
 const storeAddress = ref("Rua São Paulo, 100 - Centro, Marília/SP");
 const pickupDeadline = ref("Hoje em até 3 horas");
-const paymentLabel = computed(() =>
-  route.query.pay === "pix" ? "PIX Instantâneo" : "Pagamento na Retirada",
-);
+const isLoading = ref(true);
+const notFound = ref(false);
 const items = ref<{ name: string; quantity: number; price?: number; total?: number }[]>([]);
 
+const paymentLabel = computed(() => {
+  if (route.query.pay === "pix") return "PIX Instantâneo";
+  if (cartStore.lastReceipt?.code === code.value && cartStore.lastReceipt?.paymentMethod === "pix") {
+    return "PIX Instantâneo";
+  }
+  if (code.value && cartStore.getOrderPaymentMethod(code.value) === "pix") {
+    return "PIX Instantâneo";
+  }
+  return "Pagamento na Retirada";
+});
+
 const totalUnits = computed(() =>
-  items.value.reduce((acc, i) => acc + (i.quantity || 1), 0),
+  items.value.reduce((acc, i) => acc + (Number(i.quantity) || 1), 0),
 );
 
 onMounted(async () => {
-  const queryCode = (route.query.code as string) || cartStore.lastReservationCode || "CF26";
+  const queryCode = String((route.query.code as string) || cartStore.lastReservationCode || "").trim();
+  if (!queryCode) {
+    notFound.value = true;
+    isLoading.value = false;
+    return;
+  }
   code.value = queryCode;
+  let loadedFromMemory = false;
 
   // 1. Tenta carregar do último recibo em memória imediatamente
   if (cartStore.lastReceipt && cartStore.lastReceipt.code === queryCode) {
-    subtotal.value = cartStore.lastReceipt.total;
-    savings.value = cartStore.lastReceipt.savings;
+    loadedFromMemory = true;
+    subtotal.value = Number(cartStore.lastReceipt.total || 0);
+    savings.value = Number(cartStore.lastReceipt.savings || 0);
     storeName.value = cartStore.lastReceipt.store;
     storeAddress.value = cartStore.lastReceipt.storeAddress;
     items.value = cartStore.lastReceipt.items.map((i) => ({
@@ -52,34 +70,59 @@ onMounted(async () => {
     const res = await fetch(`${API_URL}/orders/code/${encodeURIComponent(queryCode)}`, {
       headers: authHeaders(),
     });
+    if (handleUnauthorized(res.status)) return;
     if (res.ok) {
-      const data = await res.json();
-      code.value = data.code;
-      status.value = data.status || "pendente";
-      subtotal.value = Number(data.total ?? 0);
-      savings.value = Number(data.savings ?? 0);
-      storeName.value = data.store || storeName.value;
-      storeAddress.value = data.storeAddress || storeAddress.value;
-      pickupDeadline.value = data.pickupDeadline || pickupDeadline.value;
-      if (Array.isArray(data.items) && data.items.length > 0) {
-        items.value = data.items;
+      const data = await res.json().catch(() => null);
+      if (data) {
+        code.value = data.code || queryCode;
+        status.value = data.status || "pendente";
+        subtotal.value = Number(data.total ?? 0) || 0;
+        savings.value = Number(data.savings ?? 0) || 0;
+        storeName.value = data.store || storeName.value;
+        storeAddress.value = data.storeAddress || storeAddress.value;
+        pickupDeadline.value = data.pickupDeadline || pickupDeadline.value;
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          items.value = data.items;
+        }
       }
+    } else if (!loadedFromMemory) {
+      notFound.value = true;
     }
   } catch (e) {
     console.error(e);
+    if (!loadedFromMemory) {
+      notFound.value = true;
+    }
+  } finally {
+    isLoading.value = false;
   }
 });
 
-function copyCode() {
-  if (navigator.clipboard && code.value) {
-    navigator.clipboard.writeText(code.value);
+async function copyCode() {
+  if (!code.value) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(code.value);
+      toastStore.addToast(`Código ${code.value} copiado!`, "success");
+      return;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = code.value;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
     toastStore.addToast(`Código ${code.value} copiado!`, "success");
+  } catch {
+    toastStore.addToast("Não foi possível copiar o código automaticamente.", "error");
   }
 }
 
 function shareOnWhatsApp() {
-  const itemList = items.value.map(i => `• ${i.quantity}x ${i.name}`).join('\n');
-  const msg = 
+  const itemList = items.value.map((i) => `• ${i.quantity}x ${i.name}`).join("\n");
+  const msg =
 `🌱 *Comprovante de Reserva - CheapFood*
 📌 *Código de Retirada:* ${code.value}
 🏬 *Local:* ${storeName.value}
@@ -87,15 +130,15 @@ function shareOnWhatsApp() {
 ⏰ *Prazo:* ${pickupDeadline.value}
 
 🛒 *Itens do Pedido:*
-${itemList || '1x Cesta de Produtos'}
+${itemList || "1x Cesta de Produtos"}
 
-💰 *Total a pagar:* R$ ${subtotal.value.toFixed(2).replace('.', ',')}
-✨ *Economia gerada:* R$ ${savings.value.toFixed(2).replace('.', ',')}
+💰 *Total a pagar:* ${formatBRL(subtotal.value)}
+✨ *Economia gerada:* ${formatBRL(savings.value)}
 
 Apresente este código no balcão da loja para retirar seus produtos frescos com desconto!`;
 
   const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
-  window.open(url, '_blank');
+  window.open(url, "_blank");
 }
 
 function printReceipt() {
@@ -114,6 +157,24 @@ function printReceipt() {
     </header>
 
     <main class="content">
+      <div v-if="isLoading" class="summary-card" style="text-align: center; padding: 2rem;">
+        <p class="subtitle" style="margin: 0;">Carregando comprovante...</p>
+      </div>
+
+      <div v-else-if="notFound" class="summary-card" style="text-align: center; padding: 2rem;">
+        <h2 class="title" style="margin-bottom: 0.5rem;">Comprovante não encontrado</h2>
+        <p class="subtitle">Não encontramos uma reserva ativa com este código.</p>
+        <div class="actions-stack">
+          <button class="primary-btn" @click="router.push('/perfil/historico')">
+            Ver em Meus Pedidos
+          </button>
+          <button class="back-btn" @click="router.push('/')">
+            Voltar ao início
+          </button>
+        </div>
+      </div>
+
+      <template v-else>
       <div class="success-icon-container">
         <div class="success-circle">
           <svg
@@ -132,7 +193,13 @@ function printReceipt() {
       </div>
 
       <h2 class="title">
-        {{ status === "retirado" ? "Pedido Retirado!" : "Reserva confirmada!" }}
+        {{
+          status === "retirado"
+            ? "Pedido Retirado!"
+            : status === "expirado"
+              ? "Reserva Cancelada / Expirada"
+              : "Reserva confirmada!"
+        }}
       </h2>
       <p class="subtitle">{{ pickupDeadline }}</p>
 
@@ -152,7 +219,7 @@ function printReceipt() {
           <div class="item-row" v-for="(item, idx) in items" :key="idx">
             <span class="item-value">{{ item.quantity }}x {{ item.name }}</span>
             <span v-if="item.total !== undefined" class="item-price">
-              R$ {{ item.total.toFixed(2).replace(".", ",") }}
+              {{ formatBRL(item.total) }}
             </span>
           </div>
         </div>
@@ -163,29 +230,23 @@ function printReceipt() {
         </div>
         <div class="summary-row">
           <span class="label">Subtotal</span>
-          <span class="value"
-            >R$ {{ subtotal.toFixed(2).replace(".", ",") }}</span
-          >
+          <span class="value">{{ formatBRL(subtotal) }}</span>
         </div>
         <div class="summary-row">
           <span class="label">Economia total</span>
-          <span class="value pink"
-            >- R$ {{ savings.toFixed(2).replace(".", ",") }}</span
-          >
+          <span class="value pink">- {{ formatBRL(savings) }}</span>
         </div>
 
         <hr class="divider" />
 
         <div class="summary-row total-row">
           <span class="label">Total a pagar</span>
-          <span class="value"
-            >R$ {{ subtotal.toFixed(2).replace(".", ",") }}</span
-          >
+          <span class="value">{{ formatBRL(subtotal) }}</span>
         </div>
 
         <div v-if="savings > 0" class="savings-badge">
           <SvgIcon name="leaf" :size="15" />
-          <span>Economizou R$ {{ savings.toFixed(2).replace(".", ",") }} evitando desperdício!</span>
+          <span>Economizou {{ formatBRL(savings) }} evitando desperdício!</span>
         </div>
       </div>
 
@@ -239,6 +300,7 @@ function printReceipt() {
           Voltar ao início
         </button>
       </div>
+      </template>
     </main>
 
     <BottomNav />

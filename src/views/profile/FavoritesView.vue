@@ -9,11 +9,29 @@ import { useFavoritesStore } from "@/stores/useFavoritesStore";
 const router = useRouter();
 const favoritesStore = useFavoritesStore();
 const allProducts = ref<any[]>([]);
+const isLoading = ref(true);
+const loadError = ref("");
 
-onMounted(async () => {
-  await favoritesStore.fetchFavorites();
-  allProducts.value = await ShopService.getProducts();
-});
+async function loadFavorites() {
+  isLoading.value = true;
+  loadError.value = "";
+  try {
+    const [, prods] = await Promise.all([
+      favoritesStore.fetchFavorites(),
+      ShopService.getProducts(),
+    ]);
+    const list = Array.isArray(prods) ? prods : [];
+    allProducts.value = list.filter(
+      (p: any) => !String(p.expires_in || "").includes("Vencido"),
+    );
+  } catch {
+    loadError.value = "Não foi possível carregar seus favoritos.";
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+onMounted(loadFavorites);
 
 const results = computed(() => {
   return allProducts.value.filter((p) => favoritesStore.isFavorite(p.id));
@@ -23,7 +41,7 @@ const results = computed(() => {
 <template>
   <div class="screen">
     <header class="header">
-      <button class="back-btn" @click="router.back()">
+      <button type="button" class="back-btn" @click="router.push('/perfil')" aria-label="Voltar">
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="24"
@@ -43,10 +61,23 @@ const results = computed(() => {
 
     <main class="content">
       <div class="product-list">
-        <ProductCard v-for="p in results" :key="p.id" :product="p" />
-        <p v-if="results.length === 0" class="empty">
-          Você ainda não tem produtos favoritos.
-        </p>
+        <p v-if="isLoading" class="empty">Carregando seus favoritos...</p>
+        <div v-else-if="loadError" class="empty">
+          <p style="margin-bottom: 12px">{{ loadError }}</p>
+          <button
+            type="button"
+            style="background: #ff3b69; color: #fff; border: none; border-radius: 999px; padding: 8px 16px; font-weight: 700; cursor: pointer;"
+            @click="loadFavorites"
+          >
+            Tentar novamente
+          </button>
+        </div>
+        <template v-else>
+          <ProductCard v-for="p in results" :key="p.id" :product="p" />
+          <p v-if="results.length === 0" class="empty">
+            Você ainda não tem produtos favoritos disponíveis.
+          </p>
+        </template>
       </div>
     </main>
 

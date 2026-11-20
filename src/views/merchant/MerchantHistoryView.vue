@@ -3,6 +3,7 @@ import { computed, ref, onMounted } from "vue";
 import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
 import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
 import { useMerchantStore } from "@/stores/useMerchantStore";
+import { formatBRL } from "@/composables/useAuctionClock";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 
 const merchantStore = useMerchantStore();
@@ -42,7 +43,7 @@ const totalRecovered = computed(() =>
 );
 
 function money(v: number) {
-  return `R$ ${v.toFixed(2).replace(".", ",")}`;
+  return formatBRL(v);
 }
 </script>
 
@@ -179,6 +180,14 @@ function money(v: number) {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {

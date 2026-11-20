@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import "@/assets/auth.css";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import AuthService from "@/services/auth.service";
@@ -11,23 +12,38 @@ const message = ref("");
 const isError = ref(false);
 const linkReady = ref(false);
 const resetToken = ref("");
+const isLoading = ref(false);
 
 const handleForgot = async () => {
+  if (isLoading.value) return;
+  isLoading.value = true;
   isError.value = false;
   linkReady.value = false;
+  resetToken.value = "";
+  message.value = "";
   try {
-    const res = await AuthService.forgotPassword(email.value);
+    const res = await AuthService.forgotPassword(email.value.trim());
     resetToken.value = res?.data?.resetToken || "";
-    message.value = res?.data?.emailSent
-      ? "Enviamos um link para o seu e-mail com as instruções de redefinição."
-      : "E-mail validado! Clique no botão abaixo para definir sua nova senha.";
-    linkReady.value = true;
+    linkReady.value = Boolean(resetToken.value);
+    if (res?.data?.emailSent) {
+      message.value =
+        "Enviamos um link para o seu e-mail com as instruções de redefinição.";
+    } else if (resetToken.value) {
+      message.value =
+        "E-mail validado! Clique no botão abaixo para definir sua nova senha.";
+    } else {
+      message.value =
+        res?.data?.message ||
+        "Se este e-mail estiver cadastrado, enviaremos instruções de redefinição.";
+    }
     toastStore.addToast("Solicitação processada com sucesso!", "success");
   } catch (error: any) {
     isError.value = true;
     message.value =
       error?.response?.data?.message || "E-mail não encontrado no sistema.";
     toastStore.addToast(message.value, "error");
+  } finally {
+    isLoading.value = false;
   }
 };
 
@@ -35,7 +51,7 @@ function goToReset() {
   router.push({
     path: "/reset-password",
     query: {
-      email: email.value,
+      email: email.value.trim(),
       ...(resetToken.value ? { token: resetToken.value } : {}),
     },
   });
@@ -45,7 +61,7 @@ function goToReset() {
 <template>
   <div class="auth-layout reset-layout">
     <div class="reset-header">
-      <button class="back-link" @click="router.back()">← Voltar</button>
+      <button type="button" class="back-link" @click="router.push('/login')">← Voltar</button>
     </div>
 
     <div class="reset-content">
@@ -79,8 +95,8 @@ function goToReset() {
           />
         </div>
 
-        <button type="submit" class="btn btn-primary">
-          Validar e-mail de recuperação
+        <button type="submit" class="btn btn-primary" :disabled="isLoading">
+          {{ isLoading ? "Validando..." : "Validar e-mail de recuperação" }}
         </button>
       </form>
 

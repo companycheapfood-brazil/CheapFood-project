@@ -41,6 +41,9 @@ export interface AuctionState {
 
 export function computeAuctionState(a: AuctionInfo, now: number): AuctionState {
   const end = Date.parse(a.endTime);
+  if (!Number.isFinite(end)) {
+    return { msToEnd: 0 };
+  }
   const msToEnd = Math.max(0, end - now);
   return {
     msToEnd: msToEnd > 0 ? msToEnd : 0,
@@ -48,7 +51,7 @@ export function computeAuctionState(a: AuctionInfo, now: number): AuctionState {
 }
 
 export function formatCountdown(ms: number | null): string {
-  if (ms === null || ms <= 0) return "Encerrado";
+  if (ms === null || !Number.isFinite(ms) || ms <= 0) return "Encerrado";
   const total = Math.ceil(ms / 1000);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -57,7 +60,9 @@ export function formatCountdown(ms: number | null): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-export function formatBRL(v: number): string {
-  return `R$ ${v.toFixed(2).replace(".", ",")}`;
+export function formatBRL(v: number | string | null | undefined): string {
+  const num = Number(v);
+  if (!Number.isFinite(num)) return "R$ 0,00";
+  return `R$ ${num.toFixed(2).replace(".", ",")}`;
 }
 

@@ -10,6 +10,9 @@ dist-ssr/
 *.local
 
 # Python & Cache
+venv/
+.venv/
+backend/instance/
 __pycache__/
 *.py[cod]
 *$py.class

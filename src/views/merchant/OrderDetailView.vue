@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import MerchantHeader from "@/components/merchant/MerchantHeader.vue";
 import MerchantBottomNav from "@/components/merchant/MerchantBottomNav.vue";
 import { useMerchantStore } from "@/stores/useMerchantStore";
 import { useToastStore } from "@/stores/useToastStore";
+import { formatBRL } from "@/composables/useAuctionClock";
 import { storeToRefs } from "pinia";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 
@@ -15,18 +16,26 @@ const toast = useToastStore();
 const { orders } = storeToRefs(merchantStore);
 const { confirmPickup, cancelOrder } = merchantStore;
 
-onMounted(() => {
-  if (orders.value.length === 0) merchantStore.fetchOrders();
-});
+const isLoading = ref(false);
+const isBusy = ref(false);
+const showCancelModal = ref(false);
 
 const order = computed(() => {
-  const id = route.params.orderId as string;
+  const id = String(route.params.orderId || "");
   return orders.value.find((o: any) => String(o.id) === id);
+});
+
+onMounted(async () => {
+  if (!order.value) {
+    isLoading.value = true;
+    await merchantStore.fetchOrders();
+    isLoading.value = false;
+  }
 });
 
 const spacedCode = computed(() => {
   if (!order.value) return "";
-  return order.value.code.split("").join(" ");
+  return String(order.value.code || "").split("").join(" ");
 });
 
 const statusLabel = computed(() => {
@@ -44,18 +53,31 @@ const statusLabel = computed(() => {
 });
 
 async function handleConfirm() {
-  if (order.value) {
-    await confirmPickup(order.value.id);
-    toast.addToast("Retirada confirmada com sucesso!", "success");
-    router.push("/comerciante/pedidos");
+  if (!order.value || isBusy.value) return;
+  isBusy.value = true;
+  try {
+    const ok = await confirmPickup(order.value.id);
+    if (ok) {
+      toast.addToast("Retirada confirmada com sucesso!", "success");
+      router.push("/comerciante/pedidos");
+    }
+  } finally {
+    isBusy.value = false;
   }
 }
 
 async function handleCancel() {
-  if (order.value) {
-    await cancelOrder(order.value.id);
-    toast.addToast("Pedido cancelado e estoque devolvido.", "info");
-    router.push("/comerciante/pedidos");
+  if (!order.value || isBusy.value) return;
+  isBusy.value = true;
+  try {
+    const ok = await cancelOrder(order.value.id);
+    if (ok) {
+      showCancelModal.value = false;
+      toast.addToast("Pedido cancelado e estoque devolvido.", "info");
+      router.push("/comerciante/pedidos");
+    }
+  } finally {
+    isBusy.value = false;
   }
 }
 </script>
@@ -86,8 +108,9 @@ async function handleCancel() {
           <div class="client-info">
             <p class="client-name">{{ order.customerName }}</p>
             <p class="client-meta">
-              Consumidor verificado CheapFood · 4.9
-              <SvgIcon name="star-filled" :size="12" style="color: #f59e0b" />
+              <span v-if="order.customerPhone">{{ order.customerPhone }}</span>
+              <span v-else-if="order.customerEmail">{{ order.customerEmail }}</span>
+              <span v-else>Consumidor verificado CheapFood</span>
             </p>
           </div>
         </div>
@@ -110,47 +133,87 @@ async function handleCancel() {
           </div>
           <div class="detail-row">
             <span class="detail-key">Valor Unitário</span>
-            <span class="detail-val"
-              >R$
-              {{
-                order.price ? order.price.toFixed(2).replace(".", ",") : "--"
-              }}</span
-            >
+            <span class="detail-val">{{
+              order.price !== undefined ? formatBRL(order.price) : "--"
+            }}</span>
           </div>
           <div class="detail-row">
             <span class="detail-key">Total da Reserva</span>
-            <span class="detail-val price"
-              >R$
-              {{
-                order.price
-                  ? (order.price * order.quantity).toFixed(2).replace(".", ",")
-                  : "--"
-              }}</span
-            >
+            <span class="detail-val price">{{
+              order.price !== undefined
+                ? formatBRL(order.price * order.quantity)
+                : "--"
+            }}</span>
           </div>
           <div class="detail-row">
             <span class="detail-key">Reservado em</span>
             <span class="detail-val">{{ order.createdAt || "Hoje" }}</span>
           </div>
-          <div class="detail-row">
+          <div v-if="order.status === 'pendente'" class="detail-row">
             <span class="detail-key">Retira até</span>
-            <span class="detail-val deadline"
-              >Hoje até {{ order.pickupDeadline }}</span
-            >
+            <span class="detail-val deadline">Hoje até {{ order.pickupDeadline }}</span>
           </div>
         </div>
       </section>
 
       <div class="actions" v-if="order.status === 'pendente'">
-        <button class="btn-confirm" @click="handleConfirm">
+        <button class="btn-confirm" :disabled="isBusy" @click="handleConfirm">
           <SvgIcon name="check-circle" :size="17" />
-          Confirmar retirada no balcão
+          {{ isBusy ? "Confirmando..." : "Confirmar retirada no balcão" }}
         </button>
-        <button class="btn-cancel" @click="handleCancel">
+        <button class="btn-cancel" :disabled="isBusy" @click="showCancelModal = true">
           Cancelar pedido
         </button>
       </div>
     </main>
+
+    <main class="content" v-else>
+      <div class="code-card">
+        <p v-if="isLoading" class="detail-key">Carregando detalhes do pedido...</p>
+        <template v-else>
+          <p class="client-name" style="margin-bottom: 8px;">Pedido não encontrado</p>
+          <p class="detail-key" style="margin-bottom: 16px;">
+            Esta reserva pode ter sido removida ou não pertence à sua loja.
+          </p>
+          <button class="btn-confirm" @click="router.push('/comerciante/pedidos')">
+            Voltar para Pedidos
+          </button>
+        </template>
+      </div>
+    </main>
+
+    <div
+      v-if="showCancelModal"
+      class="modal-overlay"
+      @click.self="!isBusy && (showCancelModal = false)"
+    >
+      <div class="modal-card">
+        <h3 class="modal-title">Cancelar reserva?</h3>
+        <p class="modal-desc">
+          O pedido será encerrado como expirado e os itens voltarão ao estoque.
+        </p>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn-cancel"
+            style="padding: 11px"
+            :disabled="isBusy"
+            @click="showCancelModal = false"
+          >
+            Voltar
+          </button>
+          <button
+            type="button"
+            class="btn-confirm"
+            style="padding: 11px; background: var(--mc-danger)"
+            :disabled="isBusy"
+            @click="handleCancel"
+          >
+            {{ isBusy ? "Cancelando..." : "Sim, cancelar" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <MerchantBottomNav />
   </div>
@@ -343,5 +406,46 @@ async function handleCancel() {
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 16px;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 360px;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--mc-navy);
+  margin-bottom: 8px;
+}
+
+.modal-desc {
+  font-size: 12px;
+  color: var(--mc-text-muted);
+  line-height: 1.4;
+  margin-bottom: 18px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
 }
 </style>

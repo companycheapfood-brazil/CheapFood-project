@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { storeToRefs } from "pinia";
 import ToastContainer from "@/components/ui/ToastContainer.vue";
@@ -9,25 +9,52 @@ import AuthService from "@/services/auth.service";
 import { useToastStore } from "@/stores/useToastStore";
 import { useSidebarStore } from "@/stores/useSidebarStore";
 import { useCartStore } from "@/stores/useCartStore";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
+import { useMerchantStore } from "@/stores/useMerchantStore";
+import { normalizeUserRole, sessionVersion } from "@/utils/auth";
 
 const router = useRouter();
 const route = useRoute();
 const toast = useToastStore();
 const sidebarStore = useSidebarStore();
 const cartStore = useCartStore();
+const favoritesStore = useFavoritesStore();
+const merchantStore = useMerchantStore();
 
-const { mobileFrame } = storeToRefs(sidebarStore);
+const { mobileFrame, isOpen: sidebarOpen } = storeToRefs(sidebarStore);
 const demoBarOpen = ref(false);
 const isSwitching = ref(false);
+
+const publicAuthPaths = ["/start", "/login", "/register", "/forgot-password", "/reset-password"];
+const isPublicAuthPage = computed(() => {
+  const normalized = route.path.length > 1 ? route.path.replace(/\/+$/, "") : route.path;
+  return publicAuthPaths.includes(normalized);
+});
+
+const loggedInRole = computed<"consumer" | "merchant" | null>(() => {
+  void sessionVersion.value;
+  void route.fullPath;
+  try {
+    const raw = localStorage.getItem("user");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.token) return null;
+    return normalizeUserRole(parsed.user || parsed);
+  } catch {
+    return null;
+  }
+});
 
 async function switchProfile(role: "consumer" | "merchant") {
   isSwitching.value = true;
   try {
+    cartStore.resetSession();
+    favoritesStore.resetState();
+    merchantStore.resetState();
     await AuthService.login({
       email: role === "merchant" ? "admin@cheapfood.com" : "joao@email.com",
       password: role === "merchant" ? "admin123" : "123456",
     });
-    cartStore.clearCart();
     toast.addToast(
       role === "merchant"
         ? "Alternado para Painel do Lojista!"
@@ -36,7 +63,7 @@ async function switchProfile(role: "consumer" | "merchant") {
     );
     demoBarOpen.value = false;
     router.push(role === "merchant" ? "/comerciante" : "/");
-  } catch (e) {
+  } catch {
     toast.addToast("Erro ao alternar perfil de demonstração", "error");
   } finally {
     isSwitching.value = false;
@@ -51,13 +78,13 @@ async function switchProfile(role: "consumer" | "merchant") {
       <MobileSidebar />
       <router-view v-slot="{ Component }">
         <transition name="page" mode="out-in">
-          <component :is="Component" />
+          <component :is="Component" :key="`${route.path}:${sessionVersion}`" />
         </transition>
       </router-view>
     </div>
 
     <!-- Barra Flutuante de Modo Apresentação -->
-    <div class="tcc-demo-widget">
+    <div v-show="!sidebarOpen" class="tcc-demo-widget">
       <button
         class="tcc-fab"
         @click="demoBarOpen = !demoBarOpen"
@@ -71,7 +98,7 @@ async function switchProfile(role: "consumer" | "merchant") {
         <p class="tcc-panel-title">Modo Apresentação</p>
         <button
           class="tcc-action-btn"
-          :class="{ active: !route.path.startsWith('/comerciante') }"
+          :class="{ active: loggedInRole === 'consumer' }"
           :disabled="isSwitching"
           @click="switchProfile('consumer')"
         >
@@ -80,7 +107,7 @@ async function switchProfile(role: "consumer" | "merchant") {
         </button>
         <button
           class="tcc-action-btn"
-          :class="{ active: route.path.startsWith('/comerciante') }"
+          :class="{ active: loggedInRole === 'merchant' }"
           :disabled="isSwitching"
           @click="switchProfile('merchant')"
         >
@@ -95,6 +122,7 @@ async function switchProfile(role: "consumer" | "merchant") {
           <span>{{ mobileFrame ? "Expandir Tela Cheia" : "Moldura Mobile" }}</span>
         </button>
         <button
+          v-if="!isPublicAuthPage && loggedInRole"
           class="tcc-action-btn"
           @click="
             demoBarOpen = false;
@@ -172,7 +200,7 @@ async function switchProfile(role: "consumer" | "merchant") {
   position: fixed;
   bottom: 84px;
   right: 14px;
-  z-index: 9999;
+  z-index: 1200;
   display: flex;
   flex-direction: column;
   align-items: flex-end;

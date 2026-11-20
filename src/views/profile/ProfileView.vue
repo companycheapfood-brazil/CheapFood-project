@@ -5,13 +5,23 @@ import BottomNav from "@/components/BottomNav.vue";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 import AuthService from "@/services/auth.service";
 import { useSidebarStore } from "@/stores/useSidebarStore";
+import { useCartStore } from "@/stores/useCartStore";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
+import { useMerchantStore } from "@/stores/useMerchantStore";
 import { API_URL, resolveImageUrl } from "@/config/api";
-import { authHeaders } from "@/utils/auth";
+import { authHeaders, handleUnauthorized, normalizeUserRole } from "@/utils/auth";
+import { formatBRL } from "@/composables/useAuctionClock";
 
 const router = useRouter();
 const sidebarStore = useSidebarStore();
+const cartStore = useCartStore();
+const favoritesStore = useFavoritesStore();
+const merchantStore = useMerchantStore();
 
 const handleLogout = async () => {
+  cartStore.resetSession();
+  favoritesStore.resetState();
+  merchantStore.resetState();
   try {
     await AuthService.logout();
   } catch (e) {
@@ -22,18 +32,26 @@ const handleLogout = async () => {
 
 const tabs = ["Economizados", "Reservas", "Comida salva"];
 const activeTab = ref("Economizados");
+const avatarError = ref(false);
+const isMerchantUser = ref(false);
 
-const menuItems = [
-  { icon: "heart-filled", iconColor: "#ff3b69", label: "Meus Favoritos", sub: "Produtos salvos que alimentam seu feed", to: "/perfil/favoritos" },
-  { icon: "receipt", iconColor: "#d97706", label: "Histórico de pedidos", sub: "Acompanhe reservas, códigos e avalie lojas", to: "/perfil/historico" },
-  { icon: "edit", iconColor: "#d97706", label: "Editar dados", sub: "Foto de perfil, nome, telefone e senha", to: "/perfil/editar" },
-  { icon: "help-circle", iconColor: "#d97706", label: "Central de ajuda", sub: "Dúvidas frequentes e suporte", to: "/perfil/ajuda" },
-  { icon: "file-text", iconColor: "#d97706", label: "Termos e privacidade", sub: "Regras de uso e LGPD", to: "/perfil/termos" },
-  { icon: "trash", iconColor: "#e11d48", label: "Excluir conta", sub: "Encerramento permanente de dados", to: "/perfil/excluir" },
+const allMenuItems = [
+  { icon: "heart-filled", iconColor: "#ff3b69", label: "Meus Favoritos", sub: "Produtos salvos que alimentam seu feed", to: "/perfil/favoritos", consumerOnly: true },
+  { icon: "receipt", iconColor: "#d97706", label: "Histórico de pedidos", sub: "Acompanhe reservas, códigos e avalie lojas", to: "/perfil/historico", consumerOnly: true },
+  { icon: "edit", iconColor: "#d97706", label: "Editar dados", sub: "Foto de perfil, nome, telefone e CPF", to: "/perfil/editar", consumerOnly: false },
+  { icon: "help-circle", iconColor: "#d97706", label: "Central de ajuda", sub: "Dúvidas frequentes e suporte", to: "/perfil/ajuda", consumerOnly: false },
+  { icon: "file-text", iconColor: "#d97706", label: "Termos e privacidade", sub: "Regras de uso e LGPD", to: "/perfil/termos", consumerOnly: false },
+  { icon: "trash", iconColor: "#e11d48", label: "Excluir conta", sub: "Encerramento permanente de dados", to: "/perfil/excluir", consumerOnly: false },
 ];
 
+const menuItems = computed(() =>
+  isMerchantUser.value
+    ? allMenuItems.filter((item) => !item.consumerOnly)
+    : allMenuItems,
+);
+
 const user = ref({
-  name: "João Silva",
+  name: "",
   role: "Consumidor Consciente",
   fotoUrl: "",
 });
@@ -124,28 +142,55 @@ const achievements = computed(() => [
   },
 ]);
 
+function applyUserData(u: any) {
+  if (!u) return;
+  const merchant = normalizeUserRole(u) === "merchant";
+  isMerchantUser.value = merchant;
+  user.value.name = u.name || "Usuário CheapFood";
+  user.value.role = merchant ? "Comerciante" : "Consumidor Consciente";
+  avatarError.value = false;
+  user.value.fotoUrl = u.foto ? resolveImageUrl(u.foto) : "";
+}
+
 onMounted(async () => {
   const userData = localStorage.getItem("user");
   if (userData) {
     try {
       const parsed = JSON.parse(userData);
-      const u = parsed.user || parsed;
-      if (u) {
-        user.value.name = u.name || "Consumidor";
-        user.value.role = u.role === "merchant" ? "Comerciante" : "Consumidor Consciente";
-        if (u.foto) {
-          user.value.fotoUrl = resolveImageUrl(u.foto);
-        }
-      }
+      applyUserData(parsed.user || parsed);
     } catch (e) {
       console.error(e);
     }
   }
 
   try {
-    const res = await fetch(`${API_URL}/orders`, { headers: authHeaders() });
-    if (res.ok) {
-      orders.value = await res.json();
+    const [meRes, ordersRes] = await Promise.all([
+      fetch(`${API_URL}/auth/me`, { headers: authHeaders() }),
+      fetch(`${API_URL}/orders`, { headers: authHeaders() }),
+    ]);
+
+    if (handleUnauthorized(meRes.status) || handleUnauthorized(ordersRes.status)) {
+      return;
+    }
+
+    if (meRes.ok) {
+      const meData = await meRes.json().catch(() => null);
+      if (meData?.user) {
+        applyUserData(meData.user);
+        try {
+          const raw = localStorage.getItem("user");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            parsed.user = meData.user;
+            localStorage.setItem("user", JSON.stringify(parsed));
+          }
+        } catch {}
+      }
+    }
+
+    if (ordersRes.ok) {
+      const ordData = await ordersRes.json().catch(() => []);
+      orders.value = Array.isArray(ordData) ? ordData : [];
     }
   } catch (e) {
     console.error(e);
@@ -179,13 +224,15 @@ onMounted(async () => {
           "
         >
           <img
-            v-if="user.fotoUrl"
+            v-if="user.fotoUrl && !avatarError"
             :src="user.fotoUrl"
+            alt="Foto de perfil"
             style="width: 100%; height: 100%; object-fit: cover"
+            @error="avatarError = true"
           />
           <SvgIcon v-else name="user" :size="34" />
         </div>
-        <p class="user-name">{{ user.name }}</p>
+        <p class="user-name">{{ user.name || "Minha Conta" }}</p>
         <span class="user-role-badge">
           <SvgIcon name="leaf" :size="13" />
           <span>{{ user.role }}</span>
@@ -213,9 +260,7 @@ onMounted(async () => {
           </span>
           <div class="impact-info">
             <span class="impact-label">Economia acumulada no CheapFood</span>
-            <strong class="impact-value"
-              >R$ {{ totalSavedMoney.toFixed(2).replace(".", ",") }}</strong
-            >
+            <strong class="impact-value">{{ formatBRL(totalSavedMoney) }}</strong>
             <span class="impact-sub"
               >Comprando produtos próximos ao vencimento com desconto</span
             >

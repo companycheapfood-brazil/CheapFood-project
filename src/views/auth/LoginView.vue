@@ -1,13 +1,21 @@
 <script setup lang="ts">
+import "@/assets/auth.css";
 import { ref, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import AuthService from "@/services/auth.service";
 import { useToastStore } from "@/stores/useToastStore";
+import { useCartStore } from "@/stores/useCartStore";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
+import { useMerchantStore } from "@/stores/useMerchantStore";
+import { normalizeUserRole } from "@/utils/auth";
 import SvgIcon from "@/components/ui/SvgIcon.vue";
 
 const router = useRouter();
 const route = useRoute();
 const toastStore = useToastStore();
+const cartStore = useCartStore();
+const favoritesStore = useFavoritesStore();
+const merchantStore = useMerchantStore();
 
 const isMerchant = computed(() => route.query.role === "merchant");
 
@@ -17,14 +25,18 @@ const errorMessage = ref("");
 const isLoading = ref(false);
 
 const handleLogin = async () => {
+  if (isLoading.value) return;
   isLoading.value = true;
   errorMessage.value = "";
   try {
+    cartStore.resetSession();
+    favoritesStore.resetState();
+    merchantStore.resetState();
     const res = await AuthService.login({
-      email: email.value,
+      email: email.value.trim(),
       password: password.value,
     });
-    if (res.user.role === "merchant" || res.user.tipo === "ADMIN") {
+    if (normalizeUserRole(res.user) === "merchant") {
       router.push("/comerciante");
     } else {
       router.push("/");
@@ -39,6 +51,7 @@ const handleLogin = async () => {
 };
 
 const quickDemoLogin = async (role: "consumer" | "merchant") => {
+  if (isLoading.value) return;
   email.value = role === "merchant" ? "admin@cheapfood.com" : "joao@email.com";
   password.value = role === "merchant" ? "admin123" : "123456";
   await handleLogin();
@@ -146,157 +159,7 @@ const quickDemoLogin = async (role: "consumer" | "merchant") => {
   </div>
 </template>
 
-<style>
-/* Base Layout Styles */
-.auth-layout {
-  min-height: 100vh;
-  background-color: #f6b55d;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 2rem;
-  font-family: "Inter", sans-serif;
-}
-
-.btn {
-  width: 100%;
-  padding: 1rem;
-  border-radius: 20px;
-  font-weight: 700;
-  font-size: 1rem;
-  border: none;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.btn-primary {
-  background-color: #ff3b69;
-  color: white;
-  box-shadow: 0 4px 10px rgba(255, 59, 105, 0.3);
-}
-
-.btn-primary:hover {
-  background-color: #e0335c;
-  transform: translateY(-2px);
-  box-shadow: 0 6px 15px rgba(255, 59, 105, 0.45);
-}
-
-.btn-primary:active {
-  transform: translateY(0) scale(0.98);
-  box-shadow: 0 2px 5px rgba(255, 59, 105, 0.3);
-}
-
-.logo-container-small {
-  text-align: center;
-  margin-bottom: 2rem;
-}
-
-.cart-icon-small {
-  width: 40px;
-  height: 40px;
-}
-
-.logo-text-small {
-  font-size: 2rem;
-  font-weight: 800;
-  color: white;
-  margin: 0;
-}
-
-.subtitle-small {
-  color: #c9791a;
-  font-size: 0.85rem;
-  margin-top: 0.2rem;
-  font-weight: 500;
-}
-
-.auth-box {
-  width: 100%;
-  max-width: 400px;
-}
-
-.toggle-container {
-  display: flex;
-  background-color: #f7d299;
-  border-radius: 25px;
-  margin-bottom: 2rem;
-  padding: 4px;
-}
-
-.toggle-btn {
-  flex: 1;
-  padding: 0.8rem;
-  border: none;
-  background: transparent;
-  border-radius: 20px;
-  font-weight: 600;
-  color: #c9791a;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.toggle-btn.active {
-  background-color: #ff3b69;
-  color: white;
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1.2rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.form-group label {
-  color: #c9791a;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.form-group input {
-  padding: 1rem;
-  border-radius: 12px;
-  border: 2px solid transparent;
-  background-color: #fdf6e9;
-  color: #333;
-  font-size: 1rem;
-  transition: all 0.2s ease;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: #ff3b69;
-  background-color: #fff;
-  box-shadow: 0 0 0 4px rgba(255, 59, 105, 0.15);
-}
-
-.form-group input::placeholder {
-  color: #bfa47a;
-}
-
-.forgot-link {
-  color: #ff3b69;
-  font-size: 0.9rem;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.error-msg {
-  color: #ff0000;
-  font-size: 0.9rem;
-  font-weight: bold;
-}
-
-.mt-4 {
-  margin-top: 1.5rem;
-}
-
+<style scoped>
 .demo-access-card {
   margin-top: 1.8rem;
   background: rgba(255, 255, 255, 0.85);
@@ -340,9 +203,14 @@ const quickDemoLogin = async (role: "consumer" | "merchant") => {
   transition: transform 0.15s ease, filter 0.15s ease;
 }
 
-.demo-btn:hover {
+.demo-btn:hover:not(:disabled) {
   transform: translateY(-1px);
   filter: brightness(1.05);
+}
+
+.demo-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .demo-btn.consumer {
@@ -353,73 +221,5 @@ const quickDemoLogin = async (role: "consumer" | "merchant") => {
 .demo-btn.merchant {
   background: #1e1b6e;
   color: #fff;
-}
-
-/* MERCHANT THEME OVERRIDES */
-.merchant-theme {
-  background-color: #c4b8e8 !important;
-}
-
-.merchant-theme .cart-icon-small path {
-  fill: #1e1b6e !important;
-}
-
-.merchant-theme .logo-text-small {
-  color: #1e1b6e !important;
-}
-
-.merchant-theme .logo-text-highlight {
-  color: #c9791a !important;
-}
-
-.merchant-theme .subtitle-small {
-  color: #4a4268 !important;
-}
-
-.merchant-theme .toggle-container {
-  background-color: rgba(255, 255, 255, 0.5) !important;
-}
-
-.merchant-theme .toggle-btn {
-  color: #4a4268 !important;
-}
-
-.merchant-theme .toggle-btn.active {
-  background-color: #3b30b8 !important;
-  color: white !important;
-}
-
-.merchant-theme .form-group label {
-  color: #4a4268 !important;
-}
-
-.merchant-theme .form-group input {
-  background-color: rgba(255, 255, 255, 0.7) !important;
-}
-
-.merchant-theme .form-group input:focus {
-  border-color: #3b30b8 !important;
-  box-shadow: 0 0 0 4px rgba(59, 48, 184, 0.15) !important;
-}
-
-.merchant-theme .forgot-link {
-  color: #3b30b8 !important;
-}
-
-.merchant-theme .btn-primary {
-  background-color: #3b30b8 !important;
-  box-shadow: 0 4px 10px rgba(59, 48, 184, 0.3) !important;
-}
-
-.merchant-theme .btn-primary:hover {
-  background-color: #2e2494 !important;
-}
-
-.logo-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-bottom: 0.5rem;
 }
 </style>

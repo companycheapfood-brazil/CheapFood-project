@@ -54,6 +54,7 @@ function openSubscribeModal() {
 }
 
 async function confirmPlanChange() {
+  if (isActivating.value) return;
   isActivating.value = true;
   try {
     const ok = await merchantStore.updatePlan(selectedPlan.value);
@@ -65,7 +66,7 @@ async function confirmPlanChange() {
       );
       showCheckoutModal.value = false;
     } else {
-      toast.addToast("Erro ao atualizar plano", "error");
+      toast.addToast(merchantStore.lastError || "Erro ao atualizar plano", "error");
     }
   } finally {
     isActivating.value = false;
@@ -177,7 +178,7 @@ async function confirmPlanChange() {
     <div
       v-if="showCheckoutModal"
       class="modal-overlay"
-      @click.self="showCheckoutModal = false"
+      @click.self="!isActivating && (showCheckoutModal = false)"
     >
       <div class="modal-card">
         <div class="modal-badge">MODO APRESENTAÇÃO</div>
@@ -200,7 +201,7 @@ async function confirmPlanChange() {
         </div>
 
         <div class="modal-actions">
-          <button class="btn-cancel" @click="showCheckoutModal = false">
+          <button class="btn-cancel" :disabled="isActivating" @click="showCheckoutModal = false">
             Cancelar
           </button>
           <button
@@ -403,7 +404,7 @@ async function confirmPlanChange() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2000;
   padding: 16px;
 }
 

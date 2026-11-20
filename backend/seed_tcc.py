@@ -1,4 +1,34 @@
-from app import app, db, Usuario, Estabelecimento, Produto, Pedido, Leilao, Lance, Favorito, Avaliacao, ensure_schema
+try:
+    from app import (
+        app,
+        db,
+        Usuario,
+        Estabelecimento,
+        Produto,
+        Pedido,
+        Leilao,
+        Lance,
+        Favorito,
+        Avaliacao,
+        ensure_schema,
+        _now_brt,
+    )
+except ModuleNotFoundError:
+    from backend.app import (
+        app,
+        db,
+        Usuario,
+        Estabelecimento,
+        Produto,
+        Pedido,
+        Leilao,
+        Lance,
+        Favorito,
+        Avaliacao,
+        ensure_schema,
+        _now_brt,
+    )
+from sqlalchemy import inspect as sa_inspect, text as sa_text
 from werkzeug.security import generate_password_hash
 from datetime import datetime, timedelta, timezone
 
@@ -7,12 +37,12 @@ def seed_tcc(run_migrations=True):
     if run_migrations:
         ensure_schema()
     with app.app_context():
-        now_local = datetime.now()
+        now_local = _now_brt()
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # 1. Garantir usuários principais de demonstração
         def get_or_create_user(email, nome, senha, tipo, telefone):
-            u = Usuario.query.filter_by(email=email).first()
+            u = Usuario.query.filter(db.func.lower(Usuario.email) == email.lower()).first()
             if not u:
                 u = Usuario(
                     nome=nome,
@@ -25,6 +55,8 @@ def seed_tcc(run_migrations=True):
                 db.session.flush()
             else:
                 u.nome = nome
+                u.email = email
+                u.senha = generate_password_hash(senha)
                 u.tipo = tipo
                 u.foto = None
                 if not u.telefone:
@@ -36,14 +68,20 @@ def seed_tcc(run_migrations=True):
         maria = get_or_create_user('maria@email.com', 'Maria Souza', '123456', 'CLIENTE', '(14) 99654-7890')
         carlos = get_or_create_user('carlos@email.com', 'Carlos Oliveira', '123456', 'CLIENTE', '(14) 99123-4567')
 
-        # 2. Garantir estabelecimento principal configurado
-        estab = Estabelecimento.query.first()
+        # 2. Garantir estabelecimento principal configurado (determinístico)
+        estab = (
+            Estabelecimento.query.filter_by(usuario_id=admin.id).order_by(Estabelecimento.id.asc()).first()
+            or Estabelecimento.query.order_by(Estabelecimento.id.asc()).first()
+        )
+        default_cnpj = '12.345.678/0001-90'
+        cnpj_holder = Estabelecimento.query.filter_by(cnpj=default_cnpj).first()
+        can_use_default_cnpj = (cnpj_holder is None) or (estab is not None and cnpj_holder.id == estab.id)
         if not estab:
             estab = Estabelecimento(
                 usuario_id=admin.id,
                 categoria='Padaria e Confeitaria',
                 nome='Padaria & Empório Central',
-                cnpj='12.345.678/0001-90',
+                cnpj=default_cnpj if can_use_default_cnpj else None,
                 email='contato@padariacentral.com.br',
                 telefone='(14) 3433-1020',
                 endereco='Rua São Paulo, 100 - Centro',
@@ -52,7 +90,7 @@ def seed_tcc(run_migrations=True):
                 cep='17500-010',
                 horario_funcionamento='Seg a Sáb: 08:00 às 20:00',
                 plano='monthly',
-                formas_pagamento='PIX, Cartão de Crédito/Débito e Dinheiro',
+                formas_pagamento='PIX, Cartão de Crédito, Cartão de Débito, Dinheiro',
                 notificacoes_ativas=True
             )
             db.session.add(estab)
@@ -60,7 +98,8 @@ def seed_tcc(run_migrations=True):
             estab.usuario_id = admin.id
             estab.categoria = estab.categoria or 'Padaria e Confeitaria'
             estab.nome = 'Padaria & Empório Central'
-            estab.cnpj = estab.cnpj or '12.345.678/0001-90'
+            if not estab.cnpj and can_use_default_cnpj:
+                estab.cnpj = default_cnpj
             estab.telefone = estab.telefone or '(14) 3433-1020'
             estab.endereco = 'Rua São Paulo, 100 - Centro'
             estab.cidade = 'Marília'
@@ -68,18 +107,23 @@ def seed_tcc(run_migrations=True):
             estab.cep = '17500-010'
             estab.horario_funcionamento = 'Seg a Sáb: 08:00 às 20:00'
             estab.plano = estab.plano if estab.plano in ('free', 'monthly', 'annual') else 'monthly'
-            estab.formas_pagamento = 'PIX, Cartão de Crédito/Débito e Dinheiro'
+            estab.formas_pagamento = 'PIX, Cartão de Crédito, Cartão de Débito, Dinheiro'
             estab.notificacoes_ativas = True
         db.session.flush()
 
-        # 3. Limpar produtos, leilões, lances, avaliações e pedidos antigos para recriar vitrine limpa
+        # 3. Limpar tabelas legadas opcionais e dados antigos atomicamente
+        existing_tables = set(sa_inspect(db.engine).get_table_names())
+        for legacy_tbl in ('pagamento', 'item_pedido'):
+            if legacy_tbl in existing_tables:
+                db.session.execute(sa_text(f'DELETE FROM {legacy_tbl}'))
+
         Avaliacao.query.delete()
         Favorito.query.delete()
         Lance.query.delete()
         Leilao.query.delete()
         Pedido.query.delete()
         Produto.query.delete()
-        db.session.commit()
+        db.session.flush()
 
         # 4. Cadastrar 12 produtos variados com datas relativas a HOJE
         produtos_data = [
@@ -344,7 +388,7 @@ def seed_tcc(run_migrations=True):
                 autor_nome=maria.nome,
                 produto_id=created_products[0].id,
                 estabelecimento_id=estab.id,
-                pedido_id=created_completed_orders[1].id,
+                pedido_id=created_completed_orders[13].id,
                 nota=5,
                 comentario='Produto fresquinho e embalagem intacta! Economizei quase 50% e fui super bem atendida no balcão.',
                 tags='Produto fresquinho, Ótimo desconto, Retirada rápida',

@@ -9,6 +9,7 @@ import { useCartStore } from "@/stores/useCartStore";
 import { useFavoritesStore } from "@/stores/useFavoritesStore";
 import { useSidebarStore } from "@/stores/useSidebarStore";
 import { isImageUrl, resolveImageUrl } from "@/config/api";
+import { formatBRL } from "@/composables/useAuctionClock";
 
 const router = useRouter();
 const cartStore = useCartStore();
@@ -17,8 +18,17 @@ const sidebarStore = useSidebarStore();
 const { addToCart: addCartAction } = cartStore;
 
 const search = ref("");
+const searchBarRef = ref<HTMLElement | null>(null);
+const isSearchOpen = ref(false);
 const activeFilter = ref("Todos");
 const sortBy = ref<"forYou" | "discount" | "expiring" | "price">("forYou");
+const isLoading = ref(true);
+const loadError = ref("");
+const brokenImages = ref<Record<string, boolean>>({});
+
+function markBroken(key: string) {
+  brokenImages.value[key] = true;
+}
 
 const filters = [
   {
@@ -46,6 +56,14 @@ const filters = [
     svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 8 1.75 12.2A2 2 0 0 0 9.71 22h4.58a2 2 0 0 0 1.96-1.8L18 8"/><path d="M5 8h14"/><path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0"/><path d="m12 8 1-6h2"/></svg>',
   },
   {
+    name: "Carnes",
+    svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12a4 4 0 1 0 8 0 4 4 0 1 0-8 0"/></svg>',
+  },
+  {
+    name: "Congelados",
+    svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/><line x1="19.07" y1="4.93" x2="4.93" y2="19.07"/></svg>',
+  },
+  {
     name: "Outros",
     svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>',
   },
@@ -59,42 +77,93 @@ const topUserCategories = ref<string[]>([]);
 const greetingName = ref("Você");
 
 let timer: ReturnType<typeof setInterval> | null = null;
+let isActive = true;
+
+const featuredStoreName = computed(
+  () => products.value[0]?.store || "Parceiros CheapFood",
+);
+
+const liveAuctions = computed(() =>
+  auctions.value.filter((p) => p?.auction && !p.auction.ended),
+);
 
 async function refreshRecommendations() {
   try {
     const rec = await ShopService.getRecommendations();
-    if (rec) {
-      recommendedForYou.value = rec.forYou || [];
-      buyAgainList.value = rec.buyAgain || [];
-      topUserCategories.value = rec.topCategories || [];
-      if (rec.userName) greetingName.value = rec.userName;
-      if (rec.rankedProducts && rec.rankedProducts.length > 0) {
-        products.value = rec.rankedProducts;
-      }
+    if (!isActive || !rec) return;
+    recommendedForYou.value = Array.isArray(rec.forYou) ? rec.forYou : [];
+    buyAgainList.value = Array.isArray(rec.buyAgain) ? rec.buyAgain : [];
+    topUserCategories.value = Array.isArray(rec.topCategories) ? rec.topCategories : [];
+    if (rec.userName) greetingName.value = rec.userName;
+    if (Array.isArray(rec.rankedProducts) && rec.rankedProducts.length > 0) {
+      products.value = rec.rankedProducts;
     }
   } catch {
     // fallback silencioso caso falhe
   }
 }
 
-onMounted(async () => {
-  favoritesStore.fetchFavorites();
-  const [prods, aucts] = await Promise.all([
-    ShopService.getProducts(),
-    ShopService.getAuctions().catch(() => []),
-  ]);
-  products.value = prods.filter((p: any) => !String(p.expires_in || "").includes("Vencido"));
-  auctions.value = aucts;
-  await refreshRecommendations();
+async function loadInitialData() {
+  isLoading.value = true;
+  loadError.value = "";
+  try {
+    favoritesStore.fetchFavorites();
+    const [prods, aucts] = await Promise.all([
+      ShopService.getProducts(),
+      ShopService.getAuctions().catch(() => []),
+    ]);
+    if (!isActive) return;
+    const list = Array.isArray(prods) ? prods : [];
+    products.value = list.filter((p: any) => !String(p.expires_in || "").includes("Vencido"));
+    auctions.value = Array.isArray(aucts) ? aucts : [];
+    await refreshRecommendations();
+  } catch {
+    if (isActive) {
+      loadError.value = "Não foi possível carregar as ofertas. Verifique sua conexão e tente novamente.";
+    }
+  } finally {
+    if (isActive) {
+      isLoading.value = false;
+    }
+  }
+}
 
-  // poll de leilões a cada 10s para reordenar / remover vencidos da vitrine
-  timer = setInterval(async () => {
-    auctions.value = await ShopService.getAuctions().catch(() => []);
-  }, 10000);
+function handleOutsideClick(event: MouseEvent) {
+  if (searchBarRef.value && !searchBarRef.value.contains(event.target as Node)) {
+    isSearchOpen.value = false;
+  }
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    isSearchOpen.value = false;
+  }
+}
+
+onMounted(async () => {
+  document.addEventListener("click", handleOutsideClick);
+  document.addEventListener("keydown", handleEscape);
+  await loadInitialData();
+
+  if (isActive) {
+    // poll de leilões a cada 10s para reordenar / remover vencidos da vitrine
+    timer = setInterval(async () => {
+      const next = await ShopService.getAuctions().catch(() => null);
+      if (isActive && Array.isArray(next)) {
+        auctions.value = next;
+      }
+    }, 10000);
+  }
 });
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer);
+  isActive = false;
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+  document.removeEventListener("click", handleOutsideClick);
+  document.removeEventListener("keydown", handleEscape);
 });
 
 async function selectCategory(catName: string) {
@@ -106,10 +175,13 @@ async function selectCategory(catName: string) {
 }
 
 const filteredProducts = computed(() => {
+  const q = search.value.trim().toLowerCase();
   const list = products.value.filter((p) => {
     const matchesSearch =
-      p.name.toLowerCase().includes(search.value.toLowerCase()) ||
-      p.store.toLowerCase().includes(search.value.toLowerCase());
+      !q ||
+      String(p.name || "").toLowerCase().includes(q) ||
+      String(p.store || "").toLowerCase().includes(q) ||
+      String(p.category || "").toLowerCase().includes(q);
     const matchesFilter =
       activeFilter.value === "Todos" || p.category === activeFilter.value;
     return matchesSearch && matchesFilter;
@@ -120,21 +192,24 @@ const filteredProducts = computed(() => {
       return (b.affinityScore ?? 0) - (a.affinityScore ?? 0);
     }
     if (sortBy.value === "discount") {
-      const discA = a.old_price ? (a.old_price - a.price) / a.old_price : 0;
-      const discB = b.old_price ? (b.old_price - b.price) / b.old_price : 0;
+      const discA = a.old_price > 0 ? (a.old_price - a.price) / a.old_price : 0;
+      const discB = b.old_price > 0 ? (b.old_price - b.price) / b.old_price : 0;
       return discB - discA;
     }
     if (sortBy.value === "expiring") {
-      return String(a.validity || "").localeCompare(String(b.validity || ""));
+      return String(a.validity || "9999-12-31").localeCompare(
+        String(b.validity || "9999-12-31"),
+      );
     }
     if (sortBy.value === "price") {
-      return a.price - b.price;
+      return Number(a.price || 0) - Number(b.price || 0);
     }
     return 0;
   });
 });
 
 const goToProduct = (product: any) => {
+  isSearchOpen.value = false;
   ShopService.trackPreference(product.category, product.id);
   router.push("/produto/" + product.id);
 };
@@ -206,11 +281,13 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
         </h1>
       </div>
 
-      <div class="search-bar">
+      <div class="search-bar" ref="searchBarRef">
         <input
           type="text"
           v-model="search"
           placeholder="Buscar produtos, categorias ou lojas..."
+          @focus="isSearchOpen = true"
+          @input="isSearchOpen = true"
         />
         <span class="search-icon">
           <svg
@@ -230,7 +307,7 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
         </span>
 
         <!-- Dropdown de Busca -->
-        <div class="search-dropdown" v-if="search.length > 0">
+        <div class="search-dropdown" v-if="isSearchOpen && search.trim().length > 0">
           <ul v-if="filteredProducts.length > 0">
             <li
               v-for="p in filteredProducts"
@@ -241,20 +318,22 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
               "
             >
               <img
-                v-if="isImageUrl(p.image)"
+                v-if="isImageUrl(p.image) && !brokenImages['s-' + p.id]"
                 :src="resolveImageUrl(p.image)"
                 class="search-thumb"
+                @error="markBroken('s-' + p.id)"
               />
               <span
-                v-else
+                v-else-if="p.image && !isImageUrl(p.image)"
                 v-html="p.image || p.icon"
                 class="search-emoji"
               ></span>
+              <span v-else class="search-emoji">
+                <SvgIcon name="shopping-bag" :size="18" />
+              </span>
               <div class="search-details">
                 <span class="search-name">{{ p.name }}</span>
-                <span class="search-price"
-                  >R$ {{ p.price.toFixed(2).replace(".", ",") }}</span
-                >
+                <span class="search-price">{{ formatBRL(p.price) }}</span>
               </div>
             </li>
           </ul>
@@ -278,7 +357,7 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
           <h2 class="promo-title">Até 60% OFF</h2>
           <h3 class="promo-subtitle">em laticínios, frios e padaria</h3>
           <p class="promo-desc">
-            Toque para filtrar • Padaria & Empório Central
+            Toque para filtrar • {{ featuredStoreName }}
           </p>
         </div>
         <div class="promo-img">
@@ -357,11 +436,13 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
 
             <div class="foryou-img-wrap">
               <img
-                v-if="isImageUrl(item.image)"
+                v-if="isImageUrl(item.image) && !brokenImages['fy-' + item.id]"
                 :src="resolveImageUrl(item.image)"
                 class="foryou-img"
+                @error="markBroken('fy-' + item.id)"
               />
-              <span v-else class="foryou-svg" v-html="item.image"></span>
+              <span v-else-if="item.image && !isImageUrl(item.image)" class="foryou-svg" v-html="item.image"></span>
+              <SvgIcon v-else name="shopping-bag" :size="26" />
             </div>
 
             <span class="foryou-reason">
@@ -373,12 +454,10 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
 
             <div class="foryou-bottom">
               <div class="foryou-prices">
-                <strong class="foryou-price"
-                  >R$ {{ item.price.toFixed(2).replace(".", ",") }}</strong
-                >
-                <span v-if="item.old_price" class="foryou-old"
-                  >R$ {{ item.old_price.toFixed(2).replace(".", ",") }}</span
-                >
+                <strong class="foryou-price">{{ formatBRL(item.price) }}</strong>
+                <span v-if="item.old_price && item.old_price > item.price" class="foryou-old">
+                  {{ formatBRL(item.old_price) }}
+                </span>
               </div>
               <button
                 class="foryou-add-btn"
@@ -417,14 +496,18 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
             @click="goToProduct(item)"
           >
             <img
-              v-if="isImageUrl(item.image)"
+              v-if="isImageUrl(item.image) && !brokenImages['ag-' + item.id]"
               :src="resolveImageUrl(item.image)"
               class="again-thumb"
+              @error="markBroken('ag-' + item.id)"
             />
+            <span v-else class="again-thumb" style="display: inline-flex; align-items: center; justify-content: center; color: #bfa47a;">
+              <SvgIcon name="shopping-bag" :size="18" />
+            </span>
             <div class="again-info">
               <p class="again-name">{{ item.name }}</p>
               <span class="again-meta"
-                >R$ {{ item.price.toFixed(2).replace(".", ",") }} • Pediu
+                >{{ formatBRL(item.price) }} • Pediu
                 {{ item.timesOrdered || 1 }}x</span
               >
             </div>
@@ -440,7 +523,7 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
       </section>
 
       <!-- SEÇÃO 3: LEILÕES AO VIVO -->
-      <template v-if="auctions.length > 0 && activeFilter === 'Todos'">
+      <template v-if="liveAuctions.length > 0 && activeFilter === 'Todos'">
         <div class="section-header">
           <h2 class="heading-with-icon">
             <SvgIcon name="gavel" :size="18" class="icon-pink" />
@@ -450,7 +533,7 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
         </div>
         <div class="auction-slider">
           <ProductCard
-            v-for="p in auctions"
+            v-for="p in liveAuctions"
             :key="p.id"
             :product="p"
             class="slider-card"
@@ -509,15 +592,28 @@ const quickAddRec = async (event: MouseEvent, product: any) => {
       </div>
 
       <div class="product-list">
-        <ProductCard
-          v-for="product in filteredProducts"
-          :key="product.id"
-          :product="product"
-          :showReason="sortBy === 'forYou'"
-        />
-        <p v-if="filteredProducts.length === 0" class="search-empty">
-          Nenhum produto encontrado nesta categoria.
-        </p>
+        <p v-if="isLoading" class="search-empty">Carregando ofertas próximas...</p>
+        <div v-else-if="loadError" class="search-empty">
+          <p style="margin-bottom: 10px">{{ loadError }}</p>
+          <button
+            type="button"
+            class="sort-pill active"
+            @click="loadInitialData"
+          >
+            Tentar novamente
+          </button>
+        </div>
+        <template v-else>
+          <ProductCard
+            v-for="product in filteredProducts"
+            :key="product.id"
+            :product="product"
+            :showReason="sortBy === 'forYou'"
+          />
+          <p v-if="filteredProducts.length === 0" class="search-empty">
+            Nenhum produto encontrado nesta categoria.
+          </p>
+        </template>
       </div>
     </main>
 

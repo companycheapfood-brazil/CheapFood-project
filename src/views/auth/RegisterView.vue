@@ -1,49 +1,77 @@
 <script setup lang="ts">
+import "@/assets/auth.css";
 import { ref, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import AuthService from "@/services/auth.service";
 import { useToastStore } from "@/stores/useToastStore";
+import { useCartStore } from "@/stores/useCartStore";
+import { useFavoritesStore } from "@/stores/useFavoritesStore";
+import { useMerchantStore } from "@/stores/useMerchantStore";
+import { normalizeUserRole } from "@/utils/auth";
 
 const router = useRouter();
 const route = useRoute();
 const toastStore = useToastStore();
+const cartStore = useCartStore();
+const favoritesStore = useFavoritesStore();
+const merchantStore = useMerchantStore();
 
 const isMerchant = computed(() => route.query.role === "merchant");
 
 const name = ref("");
+const storeName = ref("");
 const email = ref("");
 const password = ref("");
 const errorMessage = ref("");
 const successMessage = ref("");
+const isLoading = ref(false);
 
 const handleRegister = async () => {
+  if (isLoading.value) return;
+  errorMessage.value = "";
+  successMessage.value = "";
+
+  if (!name.value.trim()) {
+    errorMessage.value = "Informe seu nome completo.";
+    toastStore.addToast(errorMessage.value, "error");
+    return;
+  }
   if (password.value.length < 6) {
     errorMessage.value = "A senha deve ter pelo menos 6 caracteres";
     toastStore.addToast(errorMessage.value, "error");
     return;
   }
 
+  isLoading.value = true;
   try {
-    const role = route.query.role || "consumer";
+    const role = isMerchant.value ? "merchant" : "consumer";
 
-    const res = await AuthService.register({
-      name: name.value,
-      email: email.value,
+    await AuthService.register({
+      name: name.value.trim(),
+      email: email.value.trim(),
       password: password.value,
-      role: role,
+      role,
+      storeName: isMerchant.value ? storeName.value.trim() || undefined : undefined,
     });
 
-    await AuthService.login({ email: email.value, password: password.value });
+    cartStore.resetSession();
+    favoritesStore.resetState();
+    merchantStore.resetState();
+
+    const loginRes = await AuthService.login({
+      email: email.value.trim(),
+      password: password.value,
+    });
 
     successMessage.value = "Conta criada com sucesso!";
     toastStore.addToast(successMessage.value, "success");
-    setTimeout(() => {
-      router.push(role === "merchant" ? "/comerciante" : "/");
-    }, 1000);
+    router.push(normalizeUserRole(loginRes.user) === "merchant" ? "/comerciante" : "/");
   } catch (error: any) {
     errorMessage.value =
       error.response?.data?.message || error.message || "Erro ao criar conta";
     toastStore.addToast(errorMessage.value, "error");
+  } finally {
+    isLoading.value = false;
   }
 };
 </script>
@@ -69,18 +97,35 @@ const handleRegister = async () => {
     <div class="auth-box">
       <div class="toggle-container">
         <button
+          type="button"
           class="toggle-btn"
           @click="router.push(isMerchant ? '/login?role=merchant' : '/login')"
         >
           Entrar
         </button>
-        <button class="toggle-btn active">Cadastrar</button>
+        <button type="button" class="toggle-btn active">Cadastrar</button>
       </div>
 
       <form @submit.prevent="handleRegister" class="auth-form">
         <div class="form-group">
           <label>Nome completo</label>
-          <input type="text" v-model="name" placeholder="Seu nome" required />
+          <input
+            type="text"
+            v-model="name"
+            placeholder="Seu nome"
+            maxlength="100"
+            required
+          />
+        </div>
+
+        <div v-if="isMerchant" class="form-group">
+          <label>Nome do estabelecimento (opcional)</label>
+          <input
+            type="text"
+            v-model="storeName"
+            placeholder="Ex.: Padaria do Bairro"
+            maxlength="150"
+          />
         </div>
 
         <div class="form-group">
@@ -89,6 +134,7 @@ const handleRegister = async () => {
             type="email"
             v-model="email"
             placeholder="seu@email.com"
+            maxlength="100"
             required
           />
         </div>
@@ -107,7 +153,9 @@ const handleRegister = async () => {
         <p v-if="errorMessage" class="error-msg">{{ errorMessage }}</p>
         <p v-if="successMessage" class="success-msg">{{ successMessage }}</p>
 
-        <button type="submit" class="btn-register">Criar minha conta</button>
+        <button type="submit" class="btn-register" :disabled="isLoading">
+          {{ isLoading ? "Criando conta..." : "Criar minha conta" }}
+        </button>
       </form>
     </div>
   </div>

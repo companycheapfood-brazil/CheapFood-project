@@ -26,13 +26,15 @@ class ShopService {
   trackPreference(category?: string, productId?: string | number) {
     try {
       if (category && category !== "Todos") {
-        const cats: string[] = JSON.parse(localStorage.getItem(RECENT_CATS_KEY) || "[]");
+        const rawCats = JSON.parse(localStorage.getItem(RECENT_CATS_KEY) || "[]");
+        const cats: string[] = Array.isArray(rawCats) ? rawCats.filter((c) => typeof c === "string") : [];
         const updatedCats = [category, ...cats.filter((c) => c !== category)].slice(0, 6);
         localStorage.setItem(RECENT_CATS_KEY, JSON.stringify(updatedCats));
       }
       if (productId !== undefined && productId !== null) {
         const pid = String(productId);
-        const ids: string[] = JSON.parse(localStorage.getItem(RECENT_IDS_KEY) || "[]");
+        const rawIds = JSON.parse(localStorage.getItem(RECENT_IDS_KEY) || "[]");
+        const ids: string[] = Array.isArray(rawIds) ? rawIds.map((i) => String(i)) : [];
         const updatedIds = [pid, ...ids.filter((i) => i !== pid)].slice(0, 8);
         localStorage.setItem(RECENT_IDS_KEY, JSON.stringify(updatedIds));
       }
@@ -43,8 +45,10 @@ class ShopService {
 
   getRecentPreferences() {
     try {
-      const cats: string[] = JSON.parse(localStorage.getItem(RECENT_CATS_KEY) || "[]");
-      const ids: string[] = JSON.parse(localStorage.getItem(RECENT_IDS_KEY) || "[]");
+      const rawCats = JSON.parse(localStorage.getItem(RECENT_CATS_KEY) || "[]");
+      const rawIds = JSON.parse(localStorage.getItem(RECENT_IDS_KEY) || "[]");
+      const cats: string[] = Array.isArray(rawCats) ? rawCats.filter((c) => typeof c === "string") : [];
+      const ids: string[] = Array.isArray(rawIds) ? rawIds.map((i) => String(i)) : [];
       return { cats, ids };
     } catch {
       return { cats: [], ids: [] };
@@ -68,12 +72,6 @@ class ShopService {
     return axios.get(`${API_URL}/auctions`).then((res) => {
       return res.data;
     });
-  }
-
-  checkout(items: any[]) {
-    return axios
-      .post(`${API_URL}/checkout`, { items }, { headers: authHeaders() })
-      .then((res) => res.data);
   }
 }
 
